@@ -1,0 +1,243 @@
+[
+  {
+    "id": "ftchinese",
+    "url": "https://www.ftchinese.com/rss/feed",
+    "name": "FT Chinese",
+    "category": "General News"
+  },
+  {
+    "id": "yahoo_news",
+    "url": "https://news.yahoo.com/rss/",
+    "name": "Yahoo News",
+    "category": "World News"
+  },
+  {
+    "id": "nytimes_world",
+    "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "name": "New York Times World",
+    "category": "World News"
+  },
+  {
+    "id": "guardian_world",
+    "url": "https://www.theguardian.com/world/rss",
+    "name": "The Guardian World",
+    "category": "World News"
+  },
+  {
+    "id": "aljazeera",
+    "url": "https://www.aljazeera.com/xml/rss/all.xml",
+    "name": "Al Jazeera",
+    "category": "World News"
+  },
+  {
+    "id": "bbc_world",
+    "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "name": "BBC World",
+    "category": "World News"
+  },
+  {
+    "id": "nhk_news",
+    "url": "https://www.nhk.or.jp/rss/news/cat0.xml",
+    "name": "NHK News",
+    "category": "World News"
+  },
+  {
+    "id": "nhk_politics",
+    "url": "https://www.nhk.or.jp/rss/news/cat4.xml",
+    "name": "NHK Politics",
+    "category": "Politics"
+  },
+  {
+    "id": "wired",
+    "url": "https://www.wired.com/feed/rss",
+    "name": "WIRED",
+    "category": "Technology"
+  },
+  {
+    "id": "engadget",
+    "url": "https://www.engadget.com/rss.xml",
+    "name": "Engadget",
+    "category": "Technology"
+  },
+  {
+    "id": "theverge",
+    "url": "https://www.theverge.com/rss/index.xml",
+    "name": "The Verge",
+    "category": "Technology"
+  },
+  {
+    "id": "techcrunch",
+    "url": "https://techcrunch.com/feed/",
+    "name": "TechCrunch",
+    "category": "Technology"
+  },
+  {
+    "id": "arstechnica",
+    "url": "https://feeds.arstechnica.com/arstechnica/index",
+    "name": "Ars Technica",
+    "category": "Technology"
+  },
+  {
+    "id": "36kr",
+    "url": "https://36kr.com/feed",
+    "name": "36Kr",
+    "category": "Technology"
+  },
+  {
+    "id": "sspai",
+    "url": "https://sspai.com/feed",
+    "name": "SSPAI",
+    "category": "Technology"
+  },
+  {
+    "id": "economist",
+    "url": "https://www.economist.com/finance-and-economics/rss.xml",
+    "name": "The Economist",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "ft_uk",
+    "url": "https://www.ft.com/rss/home/uk",
+    "name": "Financial Times",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "forbes_business",
+    "url": "https://www.forbes.com/business/feed/",
+    "name": "Forbes Business",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "businessinsider",
+    "url": "https://www.businessinsider.com/rss",
+    "name": "Business Insider",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "cnbc",
+    "url": "https://www.cnbc.com/id/10001147/device/rss/rss.html",
+    "name": "CNBC",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "yahoo_finance",
+    "url": "https://news.yahoo.com/rss/finance",
+    "name": "Yahoo Finance",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "nhk_economy",
+    "url": "https://www.nhk.or.jp/rss/news/cat5.xml",
+    "name": "NHK Economy",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "reuters_news",
+    "url": "https://ir.thomsonreuters.com/rss/news-releases.xml?items=15",
+    "name": "Thomson Reuters News Releases",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "reuters_events",
+    "url": "https://ir.thomsonreuters.com/rss/events.xml?items=15",
+    "name": "Thomson Reuters Events",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "coindesk",
+    "url": "https://www.coindesk.com/arc/outboundfeeds/rss",
+    "name": "CoinDesk",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "blockbeats",
+    "url": "https://api.theblockbeats.news/v1/open-api/home-xml",
+    "name": "BlockBeats",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "marketwatch_top",
+    "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+    "name": "MarketWatch Top Stories",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "marketwatch_bulletins",
+    "url": "https://feeds.content.dowjones.io/public/rss/mw_bulletins",
+    "name": "MarketWatch Bulletins",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "politico_congress",
+    "url": "https://rss.politico.com/congress.xml",
+    "name": "Politico Congress",
+    "category": "Politics"
+  },
+  {
+    "id": "politico_defense",
+    "url": "https://rss.politico.com/defense.xml",
+    "name": "Politico Defense",
+    "category": "Politics"
+  },
+  {
+    "id": "politico_economy",
+    "url": "https://rss.politico.com/economy.xml",
+    "name": "POLITICO Economy",
+    "category": "Business & Finance"
+  },
+  {
+    "id": "politico_energy",
+    "url": "https://rss.politico.com/energy.xml",
+    "name": "Politico Energy",
+    "category": "Science"
+  },
+  {
+    "id": "politico_politics",
+    "url": "https://rss.politico.com/politics-news.xml",
+    "name": "Politico Politics",
+
+    "category": "Politics"
+  },
+  {
+    "id": "realclearpolitics",
+    "url": "https://www.realclearpolitics.com/index.xml",
+    "name": "RealClearPolitics",
+    "category": "Politics"
+  },
+  {
+    "id": "thehill",
+    "url": "https://thehill.com/feed",
+    "name": "The Hill",
+    "category": "Politics"
+  },
+  {
+    "id": "nbc_politics",
+    "url": "https://feeds.nbcnews.com/nbcnews/public/politics",
+    "name": "NBC Politics",
+    "category": "Politics"
+  },
+  {
+    "id": "bbc_politics",
+    "url": "https://feeds.bbci.co.uk/news/politics/rss.xml",
+    "name": "BBC Politics",
+    "category": "Politics"
+  },
+  {
+    "id": "newscientist",
+    "url": "https://feeds.newscientist.com/science-news",
+    "name": "New Scientist",
+    "category": "Science"
+  },
+  {
+    "id": "physorg",
+    "url": "https://phys.org/rss-feed/",
+    "name": "Phys.org",
+    "category": "Science"
+  },
+  {
+    "id": "space",
+    "url": "https://www.space.com/feeds/news",
+    "name": "Space.com",
+    "category": "Science"
+  }
+]

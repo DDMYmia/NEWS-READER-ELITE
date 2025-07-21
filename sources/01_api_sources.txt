@@ -1,0 +1,51 @@
+# News Sources Configuration
+# Supported News Sources
+
+# Major News Media
+reuters.com
+bbc.com
+cnn.com
+bloomberg.com
+nytimes.com
+foxnews.com
+forbes.com
+cnbc.com
+aljazeera.com
+financialexpress.com
+economictimes.indiatimes.com
+hindustantimes.com
+abcnews.go.com
+
+# Business & Financial Media
+foxbusiness.com
+globenewswire.com
+insidermonkey.com
+yahoo.com
+openpr.com
+
+# Technology Media
+techcrunch.com
+theverge.com
+wired.com
+engadget.com
+mashable.com
+ars-technica.com
+
+# Political News Media
+washingtonpost.com
+theguardian.com
+wsj.com
+
+# Science News Media
+nature.com
+scientificamerican.com
+newscientist.com
+sciencemag.org
+nationalgeographic.com
+
+# Regional News Portals
+nzcity.co.nz
+
+# Note:
+# Each source appears only in one category.
+# Prioritize primary coverage domain when assigning sources.
