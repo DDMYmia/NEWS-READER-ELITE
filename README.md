@@ -1,8 +1,23 @@
-# NEWS-COLLECTOR-ELITE
+# NEWS-READER-ELITE
 
-A comprehensive news collection system that combines multiple API sources and RSS feeds for comprehensive news gathering.
+A comprehensive news collection system with web interface that combines multiple API sources and RSS feeds for comprehensive news gathering.
+
+## 🎉 Status: Fully Functional Web Application
+
+✅ **Backend API**: Litestar server running on http://localhost:8000  
+✅ **Frontend**: React + shadcn/ui dashboard on http://localhost:3000  
+✅ **Database**: PostgreSQL with 106 articles  
+✅ **Sources**: 44 API sources + 40 RSS feeds  
+✅ **Collection**: Automated API and RSS collection  
+✅ **Real-time**: Live statistics and news display  
 
 ## Features
+
+### Web Application
+- **Modern UI**: React + shadcn/ui dashboard interface
+- **Real-time Updates**: Live news collection and statistics
+- **Interactive Controls**: Manual collection triggers and status monitoring
+- **Responsive Design**: Mobile-friendly interface
 
 ### API News Collectors
 - **Multi-API**: NewsAPI.ai, TheNewsAPI, NewsData.io, Tiingo
@@ -22,7 +37,27 @@ A comprehensive news collection system that combines multiple API sources and RS
 
 ## Quick Start
 
-### API News Collection
+### Web Application
+```bash
+# Start the backend API server
+python3 start_app.py
+
+# In another terminal, start the frontend
+cd frontend && npm run dev
+
+# Access the application
+# Frontend: http://localhost:3000
+# API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
+
+### System Test
+```bash
+# Run comprehensive system test
+python3 test_system.py
+```
+
+### API News Collection (CLI)
 ```bash
 # Manual collection
 python3 news_api_collector.py
@@ -37,7 +72,7 @@ python3 news_api_collector.py --stats
 python3 -c "from news_api_settings import load_sources_from_file; print(load_sources_from_file())"
 ```
 
-### RSS News Reading
+### RSS News Reading (CLI)
 ```bash
 # Manual RSS collection
 python3 news_rss_collector.py
@@ -45,6 +80,21 @@ python3 news_rss_collector.py
 # Auto RSS collection with 3-minute intervals
 python3 news_rss_collector.py --auto --interval 3
 ```
+
+## Web API Endpoints
+
+### News Management
+- `GET /api/news` - Get news articles (with optional limit and source filtering)
+- `GET /api/stats` - Get collection statistics
+- `GET /api/sources` - Get configured news sources
+
+### Collection Control
+- `POST /api/collect/api` - Trigger API news collection
+- `POST /api/collect/rss` - Trigger RSS news collection
+
+### System
+- `GET /api/health` - Health check endpoint
+- `GET /` - Main dashboard page
 
 ## Output Format
 
@@ -68,25 +118,40 @@ RSS: 1704 news → Dup 1686 → JSON + 2682
 ## Project Structure
 
 ```
-NEWS-COLLECTOR-ELITE/
-├── news_api_settings.py        # API collectors (NewsAPI.ai, TheNewsAPI, etc.)
-├── news_api_collector.py       # Main API collection program
-├── news_db_utils.py            # Database utilities
-├── news_rss_collector.py       # RSS news reader
-├── requirements.txt            # Dependencies
-├── README.md                   # Project documentation
-├── sources/                    # Source configurations
-│   ├── 01_api_sources.txt      # API source configuration (33 sources)
-│   └── 02_rss_sources.json     # RSS source configuration (40+ sources)
-├── outputs/                    # News output files
-│   ├── 01_rss_news.json        # RSS news data
-│   ├── 02_newsapi_ai.json      # NewsAPI.ai articles
-│   ├── 03_thenewsapi.json      # TheNewsAPI articles
-│   ├── 04_newsdata.json        # NewsData.io articles
-│   └── 05_tiingo.json          # Tiingo articles
-└── logs/                       # Log files
-    ├── 01_api_collector.log    # API collection logs
-    └── 02_rss_collector.log    # RSS collection logs
+NEWS-READER-ELITE/
+├── app/                           # Web application
+│   ├── main.py                   # Litestar application entry point
+│   ├── api/                      # API route handlers
+│   ├── models/                   # Data models
+│   ├── services/                 # Business logic
+│   ├── static/                   # Static files
+│   └── templates/                # Jinja2 templates
+├── frontend/                     # React frontend
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── dashboard/        # Dashboard page
+│   │   │   └── page.tsx          # Home page
+│   │   └── components/           # React components
+│   └── out/                      # Built static files
+├── news_api_settings.py          # API collectors (NewsAPI.ai, TheNewsAPI, etc.)
+├── news_api_collector.py         # Main API collection program
+├── news_db_utils.py              # Database utilities
+├── news_rss_collector.py         # RSS news reader
+├── start_app.py                  # Web application launcher
+├── requirements.txt              # Python dependencies
+├── README.md                     # Project documentation
+├── sources/                      # Source configurations
+│   ├── 01_api_sources.txt        # API source configuration (33 sources)
+│   └── 02_rss_sources.json       # RSS source configuration (40+ sources)
+├── outputs/                      # News output files
+│   ├── 01_rss_news.json          # RSS news data
+│   ├── 02_newsapi_ai.json        # NewsAPI.ai articles
+│   ├── 03_thenewsapi.json        # TheNewsAPI articles
+│   ├── 04_newsdata.json          # NewsData.io articles
+│   └── 05_tiingo.json            # Tiingo articles
+└── logs/                         # Log files
+    ├── 01_api_collector.log      # API collection logs
+    └── 02_rss_collector.log      # RSS collection logs
 ```
 
 ## API Source Categories
@@ -109,28 +174,55 @@ NEWS-COLLECTOR-ELITE/
 
 ## Setup
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   pip install requests python-dateutil
-   ```
+### 1. Install Dependencies
+```bash
+# Python dependencies
+pip install -r requirements.txt
 
-2. **Configure Environment** (`.env`):
-   ```
-   NEWSAPI_AI_API_KEY=your_key
-   THENEWSAPI_API_KEY=your_key
-   NEWSDATA_API_KEY=your_key
-   TIINGO_API_KEY=your_key
-   POSTGRES_HOST=localhost
-   POSTGRES_DB=news_db
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=your_password
-   ```
+# Frontend dependencies (if developing)
+cd frontend
+npm install
+```
 
-3. **Database Setup**:
-   ```bash
-   createdb news_db
-   ```
+### 2. Configure Environment (`.env`)
+```
+NEWSAPI_AI_API_KEY=your_key
+THENEWSAPI_API_KEY=your_key
+NEWSDATA_API_KEY=your_key
+TIINGO_API_KEY=your_key
+POSTGRES_HOST=localhost
+POSTGRES_DB=news_db
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+```
+
+### 3. Database Setup
+```bash
+createdb news_db
+```
+
+### 4. Build Frontend (for production)
+```bash
+cd frontend
+npm run build
+```
+
+## Development
+
+### Backend Development
+```bash
+# Start with auto-reload
+python3 start_app.py
+
+# Or use uvicorn directly
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Frontend Development
+```bash
+cd frontend
+npm run dev
+```
 
 ## API Design
 
@@ -175,8 +267,13 @@ CREATE TABLE articles (
 
 ## Dependencies
 
-- `psycopg2`, `requests`, `beautifulsoup4`, `eventregistry`, `python-dotenv`
-- `requests`, `python-dateutil` (for RSS reader)
+### Backend
+- `litestar[standard]`, `psycopg2`, `requests`, `beautifulsoup4`, `eventregistry`, `python-dotenv`
+- `jinja2`, `aiofiles` (for web application)
+
+### Frontend
+- `next.js`, `react`, `typescript`, `tailwindcss`
+- `shadcn/ui` components
 
 ## Notes
 
@@ -184,4 +281,5 @@ CREATE TABLE articles (
 - Some RSS sources may have access restrictions
 - The program automatically handles SSL certificate issues
 - Regularly check the validity of RSS sources
-- API quotas may limit collection frequency 
+- API quotas may limit collection frequency
+- Web application requires frontend to be built (`npm run build`) for production 
