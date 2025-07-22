@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
+import { Loader2 } from "lucide-react"
 
 interface NewsArticle {
   id: number
@@ -43,12 +44,75 @@ export default function DashboardPage() {
   const [sources, setSources] = useState<Sources | null>(null)
   const [loading, setLoading] = useState(true)
   const [collecting, setCollecting] = useState(false)
+  const [autoCollecting, setAutoCollecting] = useState(false)
+  const [consoleLines, setConsoleLines] = useState<string[]>([])
+  const [command, setCommand] = useState("")
+  const consoleRef = useRef<HTMLDivElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const [autoApi, setAutoApi] = useState(false)
+  const [autoRss, setAutoRss] = useState(false)
+  const [apiNew, setApiNew] = useState(0)
+  const [rssNew, setRssNew] = useState(0)
 
   const API_BASE = "http://localhost:8000/api"
+  const WS_URL = "ws://localhost:8000/ws/logs"
 
   useEffect(() => {
     loadData()
+    connectLogWS()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 新增：定时刷新自动采集状态
+  useEffect(() => {
+    let lastStatus: boolean | null = null
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cmd: "status" })
+        })
+        const data = await res.json()
+        const running = String(data.result).includes("True")
+        setAutoCollecting(running)
+        // 只在状态变化时输出到控制台
+        if (lastStatus === null) {
+          lastStatus = running
+        } else if (lastStatus !== running) {
+          setConsoleLines((lines) => [...lines, `[Status] Auto collection running: ${running}`])
+          lastStatus = running
+        }
+      } catch {}
+    }
+    checkStatus()
+    const timer = setInterval(checkStatus, 5000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // 定时刷新自动采集状态和新增条数
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/auto/status")
+        const data = await res.json()
+        setAutoApi(!!data.api_running)
+        setAutoRss(!!data.rss_running)
+        setApiNew(data.api_new || 0)
+        setRssNew(data.rss_new || 0)
+      } catch {}
+    }
+    checkStatus()
+    const timer = setInterval(checkStatus, 3000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    // 控制台自动滚动到底部
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight
+    }
+  }, [consoleLines])
 
   const loadData = async () => {
     setLoading(true)
@@ -81,6 +145,64 @@ export default function DashboardPage() {
     }
   }
 
+  // WebSocket 日志流自动重连优化
+  const connectLogWS = () => {
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // 防止多次触发
+      wsRef.current.onerror = null;
+      wsRef.current.close();
+    }
+    const ws = new window.WebSocket(WS_URL)
+    ws.onmessage = (event) => {
+      setConsoleLines((lines) => [...lines, event.data])
+    }
+    ws.onopen = () => {
+      setConsoleLines((lines) => [...lines, "[Console] Connected to backend log stream."])
+    }
+    ws.onclose = () => {
+      setConsoleLines((lines) => [...lines, "[Console] Disconnected from backend log stream."])
+      wsRef.current = null;
+      // 自动重连，防止多次重连
+      setTimeout(() => {
+        if (!wsRef.current) connectLogWS()
+      }, 2000)
+    }
+    ws.onerror = () => {
+      setConsoleLines((lines) => [...lines, "[Console] Log WebSocket error."])
+    }
+    wsRef.current = ws
+  }
+
+  // 持续获取（自动采集）
+  const toggleAutoCollect = async () => {
+    if (!autoCollecting) {
+      // 启动自动采集
+      const res = await fetch(`${API_BASE}/auto/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: 180 })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setAutoCollecting(true)
+        toast.success("Auto collection started")
+      } else {
+        toast.error(data.message || "Failed to start auto collection")
+      }
+    } else {
+      // 停止自动采集
+      const res = await fetch(`${API_BASE}/auto/stop`, { method: "POST" })
+      const data = await res.json()
+      if (data.success) {
+        setAutoCollecting(false)
+        toast.success("Auto collection stopped")
+      } else {
+        toast.error(data.message || "Failed to stop auto collection")
+      }
+    }
+  }
+
+  // 单次采集
   const collectNews = async (type: 'api' | 'rss') => {
     setCollecting(true)
     try {
@@ -99,6 +221,95 @@ export default function DashboardPage() {
       console.error(error)
     } finally {
       setCollecting(false)
+    }
+  }
+
+  // 命令输入处理
+  const handleCommandSend = async () => {
+    if (!command.trim()) return
+    setConsoleLines((lines) => [...lines, `> ${command}`])
+    try {
+      const res = await fetch(`${API_BASE}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cmd: command })
+      })
+      const data = await res.json()
+      setConsoleLines((lines) => [...lines, `[Result] ${data.result}`])
+    } catch (e) {
+      setConsoleLines((lines) => [...lines, `[Error] Command failed`])
+    }
+    setCommand("")
+  }
+
+  // 联动命令执行
+  const runConsoleCommand = async (cmd: string) => {
+    setConsoleLines((lines) => [...lines, `> ${cmd}`])
+    try {
+      const res = await fetch(`${API_BASE}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cmd })
+      })
+      const data = await res.json()
+      setConsoleLines((lines) => [...lines, `[Result] ${data.result}`])
+      // 状态命令特殊处理
+      if (cmd === "auto start") setAutoCollecting(true)
+      if (cmd === "auto stop") setAutoCollecting(false)
+    } catch (e) {
+      setConsoleLines((lines) => [...lines, `[Error] Command failed`])
+    }
+  }
+
+  // 自动API采集按钮
+  const handleAutoApiBtn = async () => {
+    if (!autoApi) {
+      setConsoleLines((lines) => [...lines, "> [API] auto start"])
+      await fetch("http://localhost:8000/api/auto/start_api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: 180 })
+      })
+    } else {
+      setConsoleLines((lines) => [...lines, "> [API] auto stop"])
+      await fetch("http://localhost:8000/api/auto/stop_api", { method: "POST" })
+    }
+  }
+  // 自动RSS采集按钮
+  const handleAutoRssBtn = async () => {
+    if (!autoRss) {
+      setConsoleLines((lines) => [...lines, "> [RSS] auto start"])
+      await fetch("http://localhost:8000/api/auto/start_rss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: 180 })
+      })
+    } else {
+      setConsoleLines((lines) => [...lines, "> [RSS] auto stop"])
+      await fetch("http://localhost:8000/api/auto/stop_rss", { method: "POST" })
+    }
+  }
+  // 新增条目数点击后归零
+  const resetApiNew = async () => {
+    await fetch("http://localhost:8000/api/auto/reset_new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "api" })
+    })
+    setApiNew(0)
+  }
+  const resetRssNew = async () => {
+    await fetch("http://localhost:8000/api/auto/reset_new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "rss" })
+    })
+    setRssNew(0)
+  }
+
+  const handleCommandKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleCommandSend()
     }
   }
 
@@ -136,21 +347,47 @@ export default function DashboardPage() {
     <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">News Reader Elite</h2>
-        <div className="flex space-x-2">
-          <Button 
-            onClick={() => collectNews('api')} 
-            disabled={collecting}
-            variant="outline"
-          >
-            {collecting ? "Collecting..." : "Collect API News"}
-          </Button>
-          <Button 
-            onClick={() => collectNews('rss')} 
-            disabled={collecting}
-            variant="outline"
-          >
-            {collecting ? "Collecting..." : "Collect RSS News"}
-          </Button>
+        <div className="flex space-x-4 items-center">
+          {/* 自动API采集按钮 */}
+          <div className="flex items-center space-x-1">
+            <Button
+              onClick={handleAutoApiBtn}
+              variant={autoApi ? "default" : "outline"}
+            >
+              {autoApi ? "Stop Auto API" : "Start Auto API"}
+            </Button>
+            <span className="flex items-center ml-1">
+              {autoApi ? (
+                <Loader2 className="animate-spin w-5 h-5 text-green-500" />
+              ) : (
+                <Loader2 className="w-5 h-5 text-gray-400" />
+              )}
+              <span className={`ml-1 text-xs ${autoApi ? 'text-green-500' : 'text-gray-400'}`}>{autoApi ? 'Running' : 'Stopped'}</span>
+              {apiNew > 0 && (
+                <span onClick={resetApiNew} className="ml-2 px-2 py-0.5 rounded bg-green-100 text-green-700 text-xs cursor-pointer hover:bg-green-200">+{apiNew}</span>
+              )}
+            </span>
+          </div>
+          {/* 自动RSS采集按钮 */}
+          <div className="flex items-center space-x-1">
+            <Button
+              onClick={handleAutoRssBtn}
+              variant={autoRss ? "default" : "outline"}
+            >
+              {autoRss ? "Stop Auto RSS" : "Start Auto RSS"}
+            </Button>
+            <span className="flex items-center ml-1">
+              {autoRss ? (
+                <Loader2 className="animate-spin w-5 h-5 text-blue-500" />
+              ) : (
+                <Loader2 className="w-5 h-5 text-gray-400" />
+              )}
+              <span className={`ml-1 text-xs ${autoRss ? 'text-blue-500' : 'text-gray-400'}`}>{autoRss ? 'Running' : 'Stopped'}</span>
+              {rssNew > 0 && (
+                <span onClick={resetRssNew} className="ml-2 px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs cursor-pointer hover:bg-blue-200">+{rssNew}</span>
+              )}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -282,6 +519,38 @@ export default function DashboardPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* 控制台区域 */}
+      <div className="mt-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Console</CardTitle>
+            <CardDescription>Real-time logs and command input</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={consoleRef}
+              className="bg-black text-green-400 font-mono rounded p-2 mb-2 h-64 overflow-y-auto text-xs"
+              style={{ minHeight: 200, maxHeight: 300 }}
+            >
+              {consoleLines.map((line, idx) => (
+                <div key={idx}>{line}</div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 border rounded px-2 py-1 text-xs bg-zinc-900 text-green-300 outline-none"
+                placeholder="Enter command (e.g. collect, status, auto start, help)"
+                value={command}
+                onChange={e => setCommand(e.target.value)}
+                onKeyDown={handleCommandKeyDown}
+                autoComplete="off"
+              />
+              <Button size="sm" variant="secondary" onClick={handleCommandSend}>Send</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
