@@ -1,4 +1,4 @@
-psycopg2-binary==2.9.9
+psycopg[binary]
 requests==2.31.0
 beautifulsoup4==4.12.2
 eventregistry==9.0
@@ -7,3 +7,4 @@ python-dateutil==2.8.2
 litestar[standard]==2.16.0
 jinja2==3.1.5
 aiofiles==24.1.0
+pymongo==4.7.3

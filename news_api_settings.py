@@ -1,511 +1,495 @@
 """
 news_api_settings.py
 
-Unified API collectors for multiple news sources (NewsAPI.ai, TheNewsAPI, NewsData.io, Tiingo).
+Unified API collectors for multiple news sources (NewsAPI.ai, TheNewsAPI, NewsData.io, Tiingo, AlphaVantage).
 
 Main Classes:
-- NewsAPIAICollector: Collector for NewsAPI.ai (Event Registry)
-- TheNewsAPICollector: Collector for TheNewsAPI
-- NewsDataCollector: Collector for NewsData.io
-- TiingoCollector: Collector for Tiingo News API
+- BaseCollector: Abstract base class for all news API collectors.
+- NewsAPIAICollector: Collector for NewsAPI.ai (Event Registry).
+- TheNewsAPICollector: Collector for TheNewsAPI.com.
+- NewsDataCollector: Collector for NewsData.io.
+- TiingoCollector: Collector for Tiingo Financial News.
+- AlphaVantageCollector: Collector for AlphaVantage Market News and Sentiment.
 
 Features:
-- Source filtering by domain or source name
-- Deduplication based on normalized title and URL
-- Unified output format for all collectors
-- Database integration for persistent storage and deduplication
+- Configurable API keys and base URLs.
+- Standardized article transformation to a unified format.
+- Local JSON file saving for each API.
+- Integration with news_postgres_utils for database persistence and deduplication.
+- Utility functions for loading API and RSS sources.
 
 Dependencies:
-- requests
-- eventregistry
-- bs4 (BeautifulSoup)
-- dotenv
-- news_db_utils (local database utility module)
+- requests: For making HTTP requests to external APIs.
+- python-dateutil: For robust parsing of various datetime formats.
+- python-dotenv: For loading environment variables.
+- news_postgres_utils: For saving articles to the database.
 
 Usage:
-Import the required collector classes in news_api_collector.py for scheduled or manual news collection.
+Collector instances are used by `news_api_collector.py` to fetch, transform, and save articles.
 
-Author: TODO
-Last updated: TODO
+Author: Gemini AI Assistant
+Last updated: 2024-07-30
 """
+
+# Python Standard Library Imports
 import os
 import json
 import logging
-import requests
-import re
-from bs4 import BeautifulSoup
-from typing import List, Dict, Optional, Tuple, Set
-from eventregistry import *
-from dotenv import load_dotenv
-import news_db_utils
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
 
-# Load environment variables
+# Third-party Imports
+import requests
+from dateutil import parser as dateutil_parser
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
 load_dotenv()
 
-def normalize_title(title: str) -> str:
-    """Normalize title for comparison by removing special characters and converting to lowercase."""
-    if not title:
-        return ""
-    # Remove special characters, extra spaces, convert to lowercase
-    normalized = re.sub(r'[^\w\s]', '', title.lower())
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    return normalized
-
-def get_all_existing_articles() -> Tuple[Set[str], Set[str]]:
-    """Get all existing normalized titles and URLs from all JSON files."""
-    json_files = [
-        'outputs/02_newsapi_ai.json',
-        'outputs/03_thenewsapi.json',
-        'outputs/04_newsdata.json',
-        'outputs/05_tiingo.json'
+# --- Logging Configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
     ]
-    
-    all_titles = set()
-    all_urls = set()
-    
-    for file_path in json_files:
+)
+
+def log_print(message: str, level: str = 'info'):
+    """Prints a log message to the console with a specific level.
+
+    Args:
+        message (str): The message to log.
+        level (str): The logging level ('info', 'warning', 'error'). Defaults to 'info'.
+    """
+    if level == 'info':
+        logging.info(message)
+    elif level == 'warning':
+        logging.warning(message)
+    elif level == 'error':
+        logging.error(message)
+    else:
+        print(message)
+
+
+# --- API Key Loading and Base URLs ---
+NEWSAPI_AI_API_KEY = os.getenv("NEWSAPI_AI_API_KEY")
+THENEWSAPI_API_KEY = os.getenv("THENEWSAPI_API_KEY")
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
+TIINGO_API_KEY = os.getenv("TIINGO_API_KEY")
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+
+NEWSAPI_AI_BASE_URL = "https://eventregistry.org/api/v1/article/getArticles"
+THENEWSAPI_BASE_URL = "https://api.thenewsapi.com/v1/news/all"
+NEWSDATA_BASE_URL = "https://newsdata.io/api/1/news"
+TIINGO_BASE_URL = "https://api.tiingo.com/tiingo/news"
+ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
+
+# --- Source File Configuration ---
+API_SOURCES_FILE = "sources/01_api_sources.txt"
+RSS_SOURCES_FILE = "sources/02_rss_sources.json"
+
+# --- Output File Configuration ---
+NEWS_FILE_RSS = "outputs/01_rss_news.json"
+NEWS_FILE_NEWSAPI_AI = "outputs/02_newsapi_ai.json"
+NEWS_FILE_THENEWSAPI = "outputs/03_thenewsapi.json"
+NEWS_FILE_NEWSDATA = "outputs/04_newsdata.json"
+NEWS_FILE_TIINGO = "outputs/05_tiingo.json"
+NEWS_FILE_ALPHA_VANTAGE = "outputs/06_alpha_vantage.json"
+
+# --- Utility Functions ---
+def load_sources_from_file(file_path: str) -> List[str]:
+    """Loads a list of sources (e.g., domain names) from a text file, one source per line.
+
+    Args:
+        file_path (str): The path to the source file.
+
+    Returns:
+        List[str]: A list of sources.
+    """
+    sources = []
+    if os.path.exists(file_path):
         try:
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    articles = json.load(f)
-                    for article in articles:
-                        title = article.get('title', '')
-                        url = article.get('url', '')
-                        if title:
-                            all_titles.add(normalize_title(title))
-                        if url:
-                            all_urls.add(url)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                sources = [line.strip() for line in f if line.strip()]
         except Exception as e:
-            logging.warning(f"Failed to read {file_path}: {e}")
-    
-    return all_titles, all_urls
+            log_print(f"Error loading sources from {file_path}: {e}", 'error')
+    return sources
 
-def deduplicate_articles(articles: List[Dict]) -> Tuple[List[Dict], int]:
-    """Deduplicate articles based on normalized title and URL. Returns (unique_articles, duplicate_count)."""
-    if not articles:
-        return [], 0
-    
-    # Get existing articles from all files
-    existing_titles, existing_urls = get_all_existing_articles()
-    
-    # Get existing articles from database
-    db_titles, db_urls = get_db_existing_articles()
-    existing_titles.update(db_titles)
-    existing_urls.update(db_urls)
-    
-    # Deduplicate articles
-    unique_articles = []
-    seen_titles = set()
-    seen_urls = set()
-    duplicate_count = 0
-    
-    for article in articles:
-        title = article.get('title', '')
-        url = article.get('url', '')
-        normalized_title = normalize_title(title)
-        
-        # Check if duplicate
-        is_duplicate = False
-        
-        # Skip if URL already exists anywhere
-        if url in existing_urls or url in seen_urls:
-            is_duplicate = True
-        
-        # Skip if normalized title already exists anywhere
-        if normalized_title in existing_titles or normalized_title in seen_titles:
-            is_duplicate = True
-        
-        if is_duplicate:
-            duplicate_count += 1
-        else:
-            # Add to unique articles
-            unique_articles.append(article)
-            seen_titles.add(normalized_title)
-            seen_urls.add(url)
-    
-    return unique_articles, duplicate_count
+def load_json_sources_from_file(file_path: str) -> List[Dict]:
+    """Loads a list of JSON objects (e.g., RSS feeds with name and URL) from a JSON file.
 
-def get_db_existing_articles() -> Tuple[Set[str], Set[str]]:
-    """Get existing normalized titles and URLs from database."""
-    connection = news_db_utils.get_db_connection()
-    if not connection:
-        return set(), set()
-    
-    try:
-        cursor = connection.cursor()
-        cursor.execute("SELECT title, url FROM articles")
-        existing_data = cursor.fetchall()
-        existing_titles = {normalize_title(row[0]) for row in existing_data if row[0]}
-        existing_urls = {row[1] for row in existing_data if row[1]}
-        cursor.close()
-        connection.close()
-        return existing_titles, existing_urls
-    except Exception as e:
-        logging.warning(f"Failed to get database existing data: {e}")
-        if connection:
-            connection.close()
-        return set(), set()
+    Args:
+        file_path (str): The path to the JSON source file.
 
-class NewsAPIAICollector:
-    """Collector for NewsAPI.ai (Event Registry)"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("NEWSAPI_AI_API_KEY")
+    Returns:
+        List[Dict]: A list of dictionaries, each representing a source.
+    """
+    sources = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                sources = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            log_print(f"Error loading JSON sources from {file_path}: {e}", 'error')
+    return sources
+
+# --- Base Collector Class ---
+class BaseCollector:
+    """Abstract base class for all news API collectors. 
+    Provides common methods for fetching, transforming, and saving articles.
+    """
+    def __init__(self, api_key: str, base_url: str, output_file: str):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.output_file = output_file
+        self.deduplicated_articles = self._load_existing_articles()
+
+    def _load_existing_articles(self) -> List[Dict]:
+        """Loads existing articles from the output JSON file for internal deduplication before saving.
+
+        Returns:
+            List[Dict]: A list of articles already present in the JSON file.
+        """
+        if os.path.exists(self.output_file):
+            try:
+                with open(self.output_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                log_print(f"Error loading existing articles from {self.output_file}: {e}", 'error')
+        return []
+
+    def _save_articles(self, articles: List[Dict]) -> List[Dict]:
+        """Saves articles to the output JSON file and updates the internal deduplication list.
+        This method handles local JSON backup. Actual database deduplication is handled by `news_db_utils`.
+
+        Args:
+            articles (List[Dict]): A list of transformed articles to save.
+
+        Returns:
+            List[Dict]: A list of articles that were newly added to the JSON file.
+        """
+        existing_urls = {article['url'] for article in self.deduplicated_articles if 'url' in article}
+        newly_added = []
+        for article in articles:
+            if 'url' in article and article['url'] not in existing_urls:
+                self.deduplicated_articles.append(article)
+                newly_added.append(article)
+                existing_urls.add(article['url'])
+        
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+        with open(self.output_file, 'w', encoding='utf-8') as f:
+            # Ensure datetime objects are converted to ISO format for JSON serialization
+            serializable_articles = []
+            for article in self.deduplicated_articles:
+                temp_article = article.copy()
+                if 'published_at' in temp_article and isinstance(temp_article['published_at'], datetime):
+                    temp_article['published_at'] = temp_article['published_at'].isoformat()
+                serializable_articles.append(temp_article)
+
+            json.dump(serializable_articles, f, ensure_ascii=False, indent=2)
+        
+        return newly_added
+
+    def _fetch_data(self, params: Dict) -> Optional[Dict]:
+        """Fetches data from the API endpoint.
+
+        Args:
+            params (Dict): Dictionary of query parameters for the API request.
+
+        Returns:
+            Optional[Dict]: The JSON response from the API, or None if an error occurred or API key is missing.
+        """
         if not self.api_key:
-            raise ValueError("API key not provided. Please set NEWSAPI_AI_API_KEY environment variable.")
-        self.er = EventRegistry(apiKey=self.api_key)
+            log_print(f"API key not provided for {self.__class__.__name__}. Skipping fetch.", 'warning')
+            return None
+        try:
+            response = requests.get(self.base_url, params=params, timeout=10)
+            response.raise_for_status() # Raise an exception for HTTP errors
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            log_print(f"Error fetching data from {self.__class__.__name__}: {e}", 'error')
+            return None
 
-    def _transform_article(self, article: Dict) -> Dict:
-        """Transform Event Registry article data into unified format."""
+    def fetch_articles(self) -> List[Dict]:
+        """Abstract method to fetch articles from the specific API.
+        Must be implemented by subclasses.
+
+        Returns:
+            List[Dict]: A list of raw articles fetched from the API.
+        """
+        raise NotImplementedError("fetch_articles method must be implemented by subclasses")
+
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        """Abstract method to transform raw article data into a unified format.
+        Must be implemented by subclasses.
+
+        Args:
+            article (Dict): The raw article dictionary from the API response.
+
+        Returns:
+            Optional[Dict]: The transformed article dictionary, or None if transformation fails.
+        """
+        raise NotImplementedError("_transform_article method must be implemented by subclasses")
+
+    def run_collector(self) -> List[Dict]:
+        """Runs the collection process for a specific API: fetches, transforms, and saves articles.
+
+        Returns:
+            List[Dict]: A list of articles that were newly added to the JSON file in this run.
+        """
+        log_print(f"Running {self.__class__.__name__}...")
+        fetched_articles = self.fetch_articles()
+        transformed_articles = [
+            self._transform_article(article) for article in fetched_articles
+            if self._transform_article(article) is not None # Filter out None after transformation
+        ]
+        newly_saved_articles = self._save_articles(transformed_articles)
+        return newly_saved_articles
+
+# --- Specific Collector Implementations ---
+class NewsAPIAICollector(BaseCollector):
+    """Collector for NewsAPI.ai (EventRegistry)."""
+    def __init__(self):
+        super().__init__(NEWSAPI_AI_API_KEY, NEWSAPI_AI_BASE_URL, NEWS_FILE_NEWSAPI_AI)
+
+    def fetch_articles(self) -> List[Dict]:
+        sources_list = load_sources_from_file(API_SOURCES_FILE)
+        if not sources_list:
+            log_print("NewsAPI.ai: No sources configured. Returning empty list.", 'warning')
+            return []
+
+        params = {
+            "action": "getArticles",
+            "query": {
+                "$query": {
+                    "forceMaxDataTimeWindow": 31,
+                    "categoryUri": "dmoz/News"
+                },
+                "$filter": {
+                    "is" : "en"
+                }
+            },
+            "resultType": "articles",
+            "articlesIncludeSource": True,
+            "articlesIncludeArticleCategories": True,
+            "articlesIncludeConceptRates": True,
+            "articlesIncludeConcepts": True,
+            "articlesIncludeTitle": True,
+            "articlesIncludeBody": True,
+            "articlesIncludeDate": True,
+            "articlesPage": 1,
+            "articlesCount": 100, # Fetch up to 100 articles per request
+            "apiKey": self.api_key
+        }
+
+        data = self._fetch_data(params)
+        articles = []
+        if data and 'articles' in data and 'results' in data['articles']:
+            articles = data['articles']['results']
+        return articles
+
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        published_at = article.get("date")
+        if published_at:
+            try:
+                dt_obj = dateutil_parser.parse(published_at)
+                published_at = dt_obj.replace(tzinfo=timezone.utc) # Convert to timezone-aware datetime
+            except ValueError:
+                published_at = None
+
         return {
             "title": article.get("title"),
             "description": article.get("body"),
             "url": article.get("url"),
             "image_url": article.get("image"),
-            "published_at": article.get("dateTime"),
+            "published_at": published_at, 
             "source_name": article.get("source", {}).get("title"),
             "source_url": article.get("source", {}).get("uri"),
             "language": article.get("lang"),
             "full_content": article.get("body"),
-            "authors": [author.get("name") for author in article.get("authors", []) if author.get("name")]
+            "authors": [], 
+            "tickers": [],
+            "topics": [cat['name'] for cat in article.get("categories", []) if 'name' in cat]
         }
 
-    def fetch_articles(
-        self,
-        lang: str = "en",
-        max_items: int = 10,
-        source_uri: Optional[List[str]] = None
-    ) -> Tuple[List[Dict], Optional[str], int]:
-        """Fetch news articles from NewsAPI.ai. Returns (articles, error_message, duplicate_count)."""
-        query_params = {
-            "dataType": ["news"],
-            "lang": lang
+class TheNewsAPICollector(BaseCollector):
+    """Collector for TheNewsAPI.com."""
+    def __init__(self):
+        super().__init__(THENEWSAPI_API_KEY, THENEWSAPI_BASE_URL, NEWS_FILE_THENEWSAPI)
+
+    def fetch_articles(self) -> List[Dict]:
+        sources_list = load_sources_from_file(API_SOURCES_FILE)
+        if not sources_list:
+            log_print("TheNewsAPI: No sources configured. Returning empty list.", 'warning')
+            return []
+        
+        params = {
+            "api_token": self.api_key,
+            "language": "en",
+            "limit": 100,
+            "search": "", 
         }
-        if source_uri:
-            query_params["sourceUri"] = QueryItems.OR(source_uri)
-
-        requested_result = RequestArticlesInfo(returnInfo=ReturnInfo(articleInfo=ArticleInfoFlags(bodyLen=-1)))
-        query_params["requestedResult"] = requested_result
-
-        q = QueryArticlesIter(**query_params)
-
+        data = self._fetch_data(params)
         articles = []
-        try:
-            for art in q.execQuery(self.er, sortBy="date", maxItems=max_items):
-                articles.append(self._transform_article(art))
-            
-            # Deduplicate articles before returning
-            unique_articles, duplicate_count = deduplicate_articles(articles)
-            return unique_articles, None, duplicate_count
-        except Exception as e:
-            error_msg = str(e)
-            if "quota" in error_msg.lower() or "limit" in error_msg.lower():
-                return [], "API quota exceeded", 0
-            elif "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
-                return [], "Invalid API key", 0
-            else:
-                return [], f"API error: {error_msg}", 0
+        if data and 'data' in data:
+            articles = data['data']
+        return articles
 
-    def save_articles(self, articles):
-        """Save articles to database and JSON file."""
-        result = news_db_utils.save_articles_simple(articles, 'outputs/02_newsapi_ai.json')
-        return result
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        published_at = article.get("published_at")
+        if published_at:
+            try:
+                dt_obj = dateutil_parser.parse(published_at)
+                published_at = dt_obj.replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = None
 
-
-class TheNewsAPICollector:
-    """Collector for TheNewsAPI"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get('THENEWSAPI_API_KEY')
-        if not self.api_key:
-            raise ValueError("THENEWSAPI_API_KEY not set. Please set your API key in the .env file.")
-
-    def _transform_article(self, article: dict) -> dict:
-        """Transform TheNewsAPI article data into unified format."""
         return {
             "title": article.get("title"),
             "description": article.get("snippet"),
             "url": article.get("url"),
             "image_url": article.get("image_url"),
-            "published_at": article.get("published_at"),
+            "published_at": published_at,
             "source_name": article.get("source"),
-            "source_url": article.get("url"),
+            "source_url": article.get("url"), 
             "language": article.get("language"),
-            "full_content": article.get("full_content"),
-            "authors": article.get("authors")
+            "full_content": article.get("description"), 
+            "authors": article.get("authors", []),
+            "tickers": [],
+            "topics": []
         }
 
-    def _get_full_article(self, url):
-        """Fetch and parse full article content from URL."""
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'lxml')
-            paragraphs = soup.find_all('p')
-            full_text = '\n'.join(p.get_text() for p in paragraphs)
-            return full_text
-        except requests.exceptions.RequestException as e:
-            return f"Could not fetch article: {e}"
-        except Exception as e:
-            return f"Error parsing article: {e}"
+class NewsDataCollector(BaseCollector):
+    """Collector for NewsData.io."""
+    def __init__(self):
+        super().__init__(NEWSDATA_API_KEY, NEWSDATA_BASE_URL, NEWS_FILE_NEWSDATA)
 
-    def fetch_articles(self, domains=None, max_items: int = 3) -> Tuple[List[Dict], Optional[str], int]:
-        """Fetch news articles from TheNewsAPI. Returns (articles, error_message, duplicate_count)."""
+    def fetch_articles(self) -> List[Dict]:
+        sources_list = load_sources_from_file(API_SOURCES_FILE)
+        if not sources_list:
+            log_print("NewsData.io: No sources configured. Returning empty list.", 'warning')
+            return []
+
         params = {
-            'api_token': self.api_key,
-            'language': 'en',
-            'limit': max_items,
+            "apikey": self.api_key,
+            "language": "en",
+            "q": "", 
+            "page": 0, 
+            "size": 100,
         }
-        if domains:
-            params['domains'] = ','.join(domains)
-        
-        try:
-            response = requests.get('https://api.thenewsapi.com/v1/news/all', params=params)
-            
-            # Check for HTTP errors first
-            if response.status_code == 402:
-                return [], "API quota exceeded (402 Payment Required)", 0
-            elif response.status_code == 401:
-                return [], "Invalid API key (401 Unauthorized)", 0
-            elif response.status_code == 429:
-                return [], "Rate limit exceeded (429 Too Many Requests)", 0
-            elif response.status_code != 200:
-                return [], f"HTTP error {response.status_code}: {response.text}", 0
-            
-            response.raise_for_status()
-            news_data = response.json()
-            transformed_articles = []
-            
-            for article in news_data.get('data', []):
-                full_content = self._get_full_article(article['url'])
-                article['full_content'] = full_content
-                transformed_articles.append(self._transform_article(article))
+        data = self._fetch_data(params)
+        articles = []
+        if data and 'results' in data:
+            articles = data['results']
+        return articles
 
-            # Deduplicate articles before returning
-            unique_articles, duplicate_count = deduplicate_articles(transformed_articles)
-            return unique_articles, None, duplicate_count
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        published_at = article.get("pubDate")
+        if published_at:
+            try:
+                dt_obj = dateutil_parser.parse(published_at)
+                published_at = dt_obj.replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = None
 
-        except requests.exceptions.RequestException as e:
-            return [], f"Network error: {e}", 0
-        except Exception as e:
-            return [], f"Unexpected error: {e}", 0
-
-    def save_articles(self, articles):
-        """Save articles to database and JSON file."""
-        result = news_db_utils.save_articles_simple(articles, 'outputs/03_thenewsapi.json')
-        return result
-
-
-class NewsDataCollector:
-    """Collector for NewsData.io"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("NEWSDATA_API_KEY")
-        if not self.api_key:
-            raise ValueError("API key not provided. Please set NEWSDATA_API_KEY environment variable.")
-        self.base_url = "https://newsdata.io/api/1/news"
-
-    def _transform_article(self, article: Dict) -> Dict:
-        """Transform NewsData.io article data into unified format."""
         return {
             "title": article.get("title"),
             "description": article.get("description"),
             "url": article.get("link"),
             "image_url": article.get("image_url"),
-            "published_at": article.get("pubDate"),
+            "published_at": published_at,
             "source_name": article.get("source_id"),
             "source_url": article.get("source_url"),
             "language": article.get("language"),
             "full_content": article.get("content"),
-            "authors": article.get("creator")
+            "authors": article.get("creator", []),
+            "tickers": [],
+            "topics": article.get("category", [])
         }
 
-    def fetch_articles(
-        self,
-        query: str = "",
-        lang: str = "en",
-        max_items: int = 10,
-        domain: Optional[List[str]] = None,
-        country: Optional[str] = None,
-        category: Optional[str] = None,
-        all_sources: Optional[List[str]] = None
-    ) -> Tuple[List[Dict], Optional[str], int]:
-        """Fetch news articles from NewsData.io. Returns (articles, error_message, duplicate_count)."""
+class TiingoCollector(BaseCollector):
+    """Collector for Tiingo (Financial News).
+    Tiingo API focuses on financial news and does not use a domains/sources file like general news APIs.
+    """
+    def __init__(self):
+        super().__init__(TIINGO_API_KEY, TIINGO_BASE_URL, NEWS_FILE_TIINGO)
+
+    def fetch_articles(self) -> List[Dict]:
         params = {
-            "apikey": self.api_key,
-            "language": lang,
-            "size": min(max_items, 50)
+            "token": self.api_key,
+            "limit": 100,
         }
-        
-        if query:
-            params["q"] = query
-        if domain:
-            params["domain"] = ",".join(domain)
-        if country:
-            params["country"] = country
-        if category:
-            params["category"] = category
+        data = self._fetch_data(params)
+        return data if isinstance(data, list) else []
 
-        try:
-            response = requests.get(self.base_url, params=params, timeout=30)
-            
-            # Check for HTTP errors first
-            if response.status_code == 402:
-                return [], "API quota exceeded", 0
-            elif response.status_code == 401:
-                return [], "Invalid API key (401 Unauthorized)", 0
-            elif response.status_code == 429:
-                return [], "Rate limit exceeded (429 Too Many Requests)", 0
-            elif response.status_code != 200:
-                return [], f"HTTP error {response.status_code}: {response.text}", 0
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get("status") != "success":
-                error_msg = data.get("message", "Unknown API error")
-                if "quota" in error_msg.lower():
-                    return [], "API quota exceeded", 0
-                else:
-                    return [], f"API error: {error_msg}", 0
-            
-            articles = []
-            for article in data.get("results", [])[:max_items]:
-                transformed_article = self._transform_article(article)
-                
-                # If domain filtering is specified, check if article is from configured sources
-                if domain or all_sources:
-                    article_source = transformed_article.get("source_name", "").lower()
-                    article_url = transformed_article.get("url", "").lower()
-                    
-                    # Use all_sources for stricter filtering (if provided)
-                    filter_sources = all_sources if all_sources else domain
-                    
-                    # Check if source is in the configured list
-                    is_allowed_source = False
-                    for allowed_domain in filter_sources:
-                        if (allowed_domain.lower() in article_source or 
-                            allowed_domain.lower() in article_url):
-                            is_allowed_source = True
-                            break
-                    
-                    # If not in the allowed sources list, skip this article
-                    if not is_allowed_source:
-                        continue
-                
-                articles.append(transformed_article)
-            
-            # Deduplicate articles before returning
-            unique_articles, duplicate_count = deduplicate_articles(articles)
-            return unique_articles, None, duplicate_count
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        published_at = article.get("publishedDate")
+        if published_at:
+            try:
+                dt_obj = dateutil_parser.parse(published_at)
+                published_at = dt_obj.replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = None
 
-        except requests.exceptions.RequestException as e:
-            return [], f"Network error: {e}", 0
-        except Exception as e:
-            return [], f"Unexpected error: {e}", 0
-
-    def save_articles(self, articles):
-        """Save articles to database and JSON file."""
-        result = news_db_utils.save_articles_simple(articles, 'outputs/04_newsdata.json')
-        return result
-
-
-class TiingoCollector:
-    """Collector for Tiingo News API"""
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("TIINGO_API_KEY")
-        if not self.api_key:
-            raise ValueError("API key not provided. Please set TIINGO_API_KEY environment variable.")
-        self.base_url = "https://api.tiingo.com/tiingo/news"
-
-    def _transform_article(self, article: Dict) -> Dict:
-        """Transform Tiingo article data into unified format."""
         return {
             "title": article.get("title"),
             "description": article.get("description"),
             "url": article.get("url"),
-            "image_url": article.get("imageUrl"),
-            "published_at": article.get("publishedDate"),
+            "image_url": None, 
+            "published_at": published_at,
             "source_name": article.get("source"),
-            "source_url": article.get("url"),
-            "language": "en",  # Tiingo primarily provides English content
-            "full_content": article.get("content"),
-            "authors": article.get("authors"),
-            "tickers": article.get("tickers", []),
-            "tags": article.get("tags", [])
+            "source_url": article.get("url"), 
+            "language": 'en', 
+            "full_content": article.get("articleBody"),
+            "authors": article.get("authors", []),
+            "tickers": article.get("tags", []),
+            "topics": []
         }
 
-    def fetch_articles(
-        self,
-        sources: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-        max_items: int = 10,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> Tuple[List[Dict], Optional[str], int]:
-        """Fetch news articles from Tiingo. Returns (articles, error_message, duplicate_count)."""
+class AlphaVantageCollector(BaseCollector):
+    """Collector for AlphaVantage Market News and Sentiment.
+    This API provides financial news and sentiment data, covering stocks, cryptocurrencies, and forex.
+    """
+    def __init__(self):
+        super().__init__(ALPHA_VANTAGE_API_KEY, ALPHA_VANTAGE_BASE_URL, NEWS_FILE_ALPHA_VANTAGE)
+
+    def fetch_articles(self) -> List[Dict]:
         params = {
-            "token": self.api_key,
-            "limit": min(max_items, 100)  # Tiingo allows up to 100 articles per request
+            "function": "NEWS_SENTIMENT",
+            "limit": 100,
+            "apikey": self.api_key,
         }
-        
-        if sources:
-            params["sources"] = ",".join(sources)
-        if tags:
-            params["tags"] = ",".join(tags)
-        if start_date:
-            params["startDate"] = start_date
-        if end_date:
-            params["endDate"] = end_date
+        data = self._fetch_data(params)
+        articles = []
+        if data and 'feed' in data:
+            articles = data['feed']
+        return articles
 
-        try:
-            response = requests.get(self.base_url, params=params, timeout=30)
-            
-            # Check for HTTP errors first
-            if response.status_code == 401:
-                return [], "Invalid API key (401 Unauthorized)", 0
-            elif response.status_code == 429:
-                return [], "Rate limit exceeded (429 Too Many Requests)", 0
-            elif response.status_code == 403:
-                return [], "API quota exceeded (403 Forbidden)", 0
-            elif response.status_code != 200:
-                return [], f"HTTP error {response.status_code}: {response.text}", 0
-            
-            response.raise_for_status()
-            articles_data = response.json()
-            
-            if not isinstance(articles_data, list):
-                return [], f"Unexpected response format: {type(articles_data)}", 0
-            
-            articles = []
-            for article in articles_data[:max_items]:
-                articles.append(self._transform_article(article))
-            
-            # Deduplicate articles before returning
-            unique_articles, duplicate_count = deduplicate_articles(articles)
-            return unique_articles, None, duplicate_count
+    def _transform_article(self, article: Dict) -> Optional[Dict]:
+        published_at = article.get("time_published", "")
+        if published_at:
+            try:
+                dt_obj = datetime.strptime(published_at, '%Y%m%dT%H%M%S')
+                published_at = dt_obj.replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = None 
 
-        except requests.exceptions.RequestException as e:
-            return [], f"Network error: {e}", 0
-        except Exception as e:
-            return [], f"Unexpected error: {e}", 0
+        authors = [author.get("name") for author in article.get("authors", []) if author.get("name")]
+        tickers = [item.get("ticker") for item in article.get("tickers_sentiment", []) if item.get("ticker")]
+        topics = [item.get("topic") for item in article.get("topics", []) if item.get("topic")]
 
-    def save_articles(self, articles):
-        """Save articles to database and JSON file."""
-        result = news_db_utils.save_articles_simple(articles, 'outputs/05_tiingo.json')
-        return result
-
-
-def load_sources_from_file(filepath='sources/01_api_sources.txt'):
-    """Load news source domains from file."""
-    try:
-        with open(filepath, 'r') as f:
-            sources = []
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    sources.append(line)
-            return sources
-    except FileNotFoundError:
-        return [] 
+        return {
+            "title": article.get("title"),
+            "description": article.get("summary"),
+            "url": article.get("url"),
+            "image_url": article.get("banner_image"),
+            "published_at": published_at, 
+            "source_name": article.get("source"),
+            "source_url": article.get("source_domain"),
+            "language": article.get("language"),
+            "full_content": article.get("content"),
+            "authors": authors,
+            "tickers": tickers,
+            "topics": topics
+        } 

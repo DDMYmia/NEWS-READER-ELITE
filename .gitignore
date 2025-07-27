@@ -54,3 +54,6 @@ news_output/auto_collector.log
 # Temporary files
 *.tmp
 *.temp
+
+# Frontend package lock file
+package-lock.json

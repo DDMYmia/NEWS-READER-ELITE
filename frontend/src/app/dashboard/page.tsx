@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -11,20 +11,30 @@ import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 
 interface NewsArticle {
-  id: number
+  id: string
   title: string
   description: string
   url: string
-  source_name: string
+  image_url?: string
   published_at: string
+  source_name: string
+  source_url?: string
   language: string
-  tags?: string[]
+  topics?: string[]
   tickers?: string[]
+  authors?: string[]
+  full_content?: string
 }
 
 interface Stats {
   database_count: number
-  source_stats: Record<string, number>
+  mongodb_backup_count: number // Add MongoDB count
+  rss_file_count: number // Add specific file counts
+  newsapi_ai_file_count: number
+  thenewsapi_file_count: number
+  newsdata_file_count: number
+  tiingo_file_count: number
+  alpha_vantage_file_count: number
   last_updated: string
 }
 
@@ -53,6 +63,11 @@ export default function DashboardPage() {
   const [autoRss, setAutoRss] = useState(false)
   const [apiNew, setApiNew] = useState(0)
   const [rssNew, setRssNew] = useState(0)
+  // const [alphaVantageNew, setAlphaVantageNew] = useState(0) // 移除 AlphaVantage 新增计数
+  // const [autoAlphaVantage, setAutoAlphaVantage] = useState(false) // 移除 AlphaVantage 自动采集状态
+
+  // 新增：实时新闻流状态
+  const [realtimeNewsFeed, setRealtimeNewsFeed] = useState<NewsArticle[]>([])
 
   const API_BASE = "http://localhost:8000/api"
   const WS_URL = "ws://localhost:8000/ws/logs"
@@ -63,7 +78,7 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 新增：定时刷新自动采集状态
+  // 新增：定时刷新自动采集状态 (可以调整为更长时间的备用轮询)
   useEffect(() => {
     let lastStatus: boolean | null = null
     const checkStatus = async () => {
@@ -86,11 +101,12 @@ export default function DashboardPage() {
       } catch {}
     }
     checkStatus()
-    const timer = setInterval(checkStatus, 5000)
+    // 将此轮询间隔调长，作为 WebSocket 的备用/心跳
+    const timer = setInterval(checkStatus, 30000) // 例如 30 秒
     return () => clearInterval(timer)
   }, [])
 
-  // 定时刷新自动采集状态和新增条数
+  // 定时刷新自动采集状态和新增条数 (此轮询频率可以调低或移除，主要依赖 WebSocket 推送)
   useEffect(() => {
     const checkStatus = async () => {
       try {
@@ -103,7 +119,8 @@ export default function DashboardPage() {
       } catch {}
     }
     checkStatus()
-    const timer = setInterval(checkStatus, 3000)
+    // 将此轮询间隔调长，作为 WebSocket 的备用/心跳
+    const timer = setInterval(checkStatus, 30000) // 例如 30 秒
     return () => clearInterval(timer)
   }, [])
 
@@ -146,32 +163,102 @@ export default function DashboardPage() {
   }
 
   // WebSocket 日志流自动重连优化
-  const connectLogWS = () => {
+  const connectLogWS = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.onclose = null; // 防止多次触发
       wsRef.current.onerror = null;
       wsRef.current.close();
     }
-    const ws = new window.WebSocket(WS_URL)
-    ws.onmessage = (event) => {
-      setConsoleLines((lines) => [...lines, event.data])
-    }
+    
+    const startTime = Date.now(); // Record start time
+    const ws = new WebSocket(WS_URL)
+    wsRef.current = ws;
+    let retries = 0;
+
     ws.onopen = () => {
-      setConsoleLines((lines) => [...lines, "[Console] Connected to backend log stream."])
+      const latency = Date.now() - startTime; // Calculate latency
+      setConsoleLines((prev) => [
+        ...prev,
+        `[Console] Connected to backend log stream. Latency: ${latency}ms.`,
+      ]);
+      // setAutoCollecting(true) // 此行与日志流连接无关，已移除
+      retries = 0; // Reset retries on successful connection
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        console.log("Raw WebSocket message received:", event.data); // Debug: Log raw message
+        const message = JSON.parse(event.data);
+        console.log("Parsed WebSocket message:", message); // Debug: Log parsed message
+
+        if (message.type === "data_update") {
+          if (message.payload.type === "news_update") {
+            console.log("News update payload received:", message.payload.new_articles_list); // Debug: Log new articles list
+            // 处理新闻文章更新消息
+            setApiNew(message.payload.api_new || 0);
+            setRssNew(message.payload.rss_new || 0);
+            setStats(prevStats => ({ 
+              ...prevStats, 
+              database_count: message.payload.total_articles || 0, 
+              mongodb_backup_count: message.payload.total_articles_mongo || 0, // Ensure MongoDB count is updated
+              last_updated: new Date().toISOString() 
+            }));
+            // 将新文章添加到现有文章列表的顶部
+            setArticles(prevArticles => [...(message.payload.new_articles_list || []).map(article => ({
+              ...article,
+              published_at: new Date(article.published_at).toLocaleString() // 确保日期格式化
+            })), ...prevArticles]);
+            // 同时更新实时新闻流，限制数量
+            setRealtimeNewsFeed(prevFeed => [
+              ...(message.payload.new_articles_list || []).map(article => ({
+                ...article,
+                published_at: new Date(article.published_at).toLocaleString() // 确保日期格式化
+              })),
+              ...prevFeed
+            ].slice(0, 10)); // 只保留最新的 10 篇
+
+            setConsoleLines((lines) => [...lines, `[Data Update] New API: ${message.payload.api_new}, New RSS: ${message.payload.rss_new}, Total: ${message.payload.total_articles}`]);
+          } else {
+            // 处理其他类型的数据更新消息（目前只有计数更新）
+            setApiNew(message.payload.api_new || 0);
+            setRssNew(message.payload.rss_new || 0);
+            loadData(); // 触发数据重新加载以更新文章列表和总数
+            setConsoleLines((lines) => [...lines, `[Data Update] New API: ${message.payload.api_new}, New RSS: ${message.payload.rss_new}, Total: ${message.payload.total_articles}`]);
+          }
+        } else if (message.type === "log") {
+          // 处理普通日志消息
+          setConsoleLines((lines) => [...lines, message.message]);
+        } else {
+          // 无法识别的JSON消息，当作普通日志处理
+          setConsoleLines((lines) => [...lines, event.data]);
+        }
+      } catch (e) {
+        // 不是JSON格式的消息，当作普通日志处理
+        setConsoleLines((lines) => [...lines, event.data]);
+      }
+      retries = 0; // 成功接收消息后重置尝试次数
     }
     ws.onclose = () => {
       setConsoleLines((lines) => [...lines, "[Console] Disconnected from backend log stream."])
       wsRef.current = null;
-      // 自动重连，防止多次重连
+      // 自动重连，指数退避
+      const nextAttempt = retries + 1;
+      const reconnectTimeout = Math.min(1000 * Math.pow(2, nextAttempt), 30 * 1000); // 最长 30 秒
       setTimeout(() => {
         if (!wsRef.current) connectLogWS()
-      }, 2000)
+      }, reconnectTimeout)
     }
     ws.onerror = () => {
       setConsoleLines((lines) => [...lines, "[Console] Log WebSocket error."])
+      wsRef.current = null;
+      // 错误时也尝试重连，使用指数退避
+      const nextAttempt = retries + 1;
+      const reconnectTimeout = Math.min(1000 * Math.pow(2, nextAttempt), 30 * 1000); // 最长 30 秒
+      setTimeout(() => {
+        if (!wsRef.current) connectLogWS()
+      }, reconnectTimeout)
     }
-    wsRef.current = ws
-  }
+  }, [])
 
   // 持续获取（自动采集）
   const toggleAutoCollect = async () => {
@@ -212,7 +299,7 @@ export default function DashboardPage() {
       
       if (response.ok) {
         toast.success(`${type.toUpperCase()} collection completed`)
-        await loadData() // Reload data
+        // await loadData() // 移除这里的 loadData()，改用 WebSocket 推送触发
       } else {
         toast.error(`Failed to collect ${type} news`)
       }
@@ -263,32 +350,68 @@ export default function DashboardPage() {
 
   // 自动API采集按钮
   const handleAutoApiBtn = async () => {
-    if (!autoApi) {
-      setConsoleLines((lines) => [...lines, "> [API] auto start"])
-      await fetch("http://localhost:8000/api/auto/start_api", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval: 180 })
-      })
-    } else {
-      setConsoleLines((lines) => [...lines, "> [API] auto stop"])
-      await fetch("http://localhost:8000/api/auto/stop_api", { method: "POST" })
+    const isStarting = !autoApi;
+    setConsoleLines((lines) => [
+      ...lines,
+      isStarting ? "> [API] auto start" : "> [API] auto stop",
+    ]);
+    setAutoApi(isStarting); // 立即乐观更新状态
+    try {
+      const res = await fetch(
+        isStarting
+          ? "http://localhost:8000/api/auto/start_api"
+          : "http://localhost:8000/api/auto/stop_api",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ interval: 180 }),
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        toast.success(isStarting ? "Auto API collection started" : "Auto API collection stopped");
+      } else {
+        toast.error(data.message || "Failed to change auto API collection state");
+        setAutoApi(!isStarting); // 如果失败，回滚状态
+      }
+    } catch (error) {
+      toast.error("Network error or backend issue");
+      console.error(error);
+      setAutoApi(!isStarting); // 网络错误，回滚状态
     }
-  }
+  };
   // 自动RSS采集按钮
   const handleAutoRssBtn = async () => {
-    if (!autoRss) {
-      setConsoleLines((lines) => [...lines, "> [RSS] auto start"])
-      await fetch("http://localhost:8000/api/auto/start_rss", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval: 180 })
-      })
-    } else {
-      setConsoleLines((lines) => [...lines, "> [RSS] auto stop"])
-      await fetch("http://localhost:8000/api/auto/stop_rss", { method: "POST" })
+    const isStarting = !autoRss;
+    setConsoleLines((lines) => [
+      ...lines,
+      isStarting ? "> [RSS] auto start" : "> [RSS] auto stop",
+    ]);
+    setAutoRss(isStarting); // 立即乐观更新状态
+    try {
+      const res = await fetch(
+        isStarting
+          ? "http://localhost:8000/api/auto/start_rss"
+          : "http://localhost:8000/api/auto/stop_rss",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ interval: 180 }),
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        toast.success(isStarting ? "Auto RSS collection started" : "Auto RSS collection stopped");
+      } else {
+        toast.error(data.message || "Failed to change auto RSS collection state");
+        setAutoRss(!isStarting); // 如果失败，回滚状态
+      }
+    } catch (error) {
+      toast.error("Network error or backend issue");
+      console.error(error);
+      setAutoRss(!isStarting); // 网络错误，回滚状态
     }
-  }
+  };
   // 新增条目数点击后归零
   const resetApiNew = async () => {
     await fetch("http://localhost:8000/api/auto/reset_new", {
@@ -399,30 +522,60 @@ export default function DashboardPage() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            {/* Combined Total Articles Card */}
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1">
                 <CardTitle className="text-sm font-medium">Total Articles</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stats?.database_count || 0}</div>
-                <p className="text-xs text-muted-foreground">
+              <CardContent className="pt-1">
+                <div className="space-y-0.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">PostgreSQL:</span>
+                    <span className="text-lg font-bold">{stats?.database_count || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">MongoDB:</span>
+                    <span className="text-lg font-bold">{stats?.mongodb_backup_count || 0}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Local JSON:</span>
+                    <span className="text-lg font-bold">
+                      {stats ? (
+                        (stats.rss_file_count || 0) + 
+                        (stats.newsapi_ai_file_count || 0) + 
+                        (stats.thenewsapi_file_count || 0) + 
+                        (stats.newsdata_file_count || 0) + 
+                        (stats.tiingo_file_count || 0) + 
+                        (stats.alpha_vantage_file_count || 0)
+                      ) : 0}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
                   Last updated: {stats?.last_updated ? formatDate(stats.last_updated) : 'N/A'}
                 </p>
               </CardContent>
             </Card>
 
-            {stats?.source_stats && Object.entries(stats.source_stats).map(([source, count]) => (
-              <Card key={source}>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">{source}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{count}</div>
-                  <p className="text-xs text-muted-foreground">articles</p>
-                </CardContent>
-              </Card>
-            ))}
+            {/* Dynamically render individual file counts for detailed view */}
+            {stats && Object.entries(stats).map(([key, value]) => {
+              if (key.endsWith('_file_count')) {
+                const displayName = key.replace('_file_count', '').replace(/_/g, ' ').replace(/(\b\w)/g, s => s.toUpperCase());
+                return (
+                  <Card key={key}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1">
+                      <CardTitle className="text-sm font-medium">{displayName} File</CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-1">
+                      <div className="text-2xl font-bold">{value}</div>
+                      <p className="text-xs text-muted-foreground">articles in JSON</p>
+                    </CardContent>
+                  </Card>
+                );
+              }
+              return null;
+            })}
           </div>
         </TabsContent>
 
@@ -438,11 +591,7 @@ export default function DashboardPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Published</TableHead>
-                    <TableHead>Language</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead>Title</TableHead><TableHead>Source</TableHead><TableHead>Published</TableHead><TableHead>Language</TableHead><TableHead>Tickers</TableHead>{/* 新增股票代码列 */}<TableHead>Topics</TableHead>{/* 新增主题列 */}<TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -462,6 +611,28 @@ export default function DashboardPage() {
                       <TableCell>{formatDate(article.published_at)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{article.language}</Badge>
+                      </TableCell>
+                      <TableCell> {/* 显示股票代码 */}
+                        {article.tickers && article.tickers.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {article.tickers.map((ticker, idx) => (
+                              <Badge key={idx} variant="default">{ticker}</Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          "N/A"
+                        )}
+                      </TableCell>
+                      <TableCell> {/* 显示主题 */}
+                        {article.topics && article.topics.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {article.topics.map((topic, idx) => (
+                              <Badge key={idx} variant="outline">{topic}</Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          "N/A"
+                        )}
                       </TableCell>
                       <TableCell>
                         <Button
@@ -489,6 +660,9 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
+                  <Badge variant="outline" className="mr-2 mb-2">
+                    AlphaVantage
+                  </Badge>
                   {sources?.api?.map((source, index) => (
                     <Badge key={index} variant="outline" className="mr-2 mb-2">
                       {source}
@@ -520,14 +694,67 @@ export default function DashboardPage() {
         </TabsContent>
       </Tabs>
 
-      {/* 控制台区域 */}
-      <div className="mt-8">
+      {/* 实时新闻流区域 */}
+      <div className="mt-6">
         <Card>
-          <CardHeader>
-            <CardTitle>Console</CardTitle>
-            <CardDescription>Real-time logs and command input</CardDescription>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Real-time News Feed</CardTitle>
+            <CardDescription className="text-sm">Latest articles pushed from backend</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-2">
+            <div className="h-64 overflow-y-auto space-y-2 border rounded-md p-2 bg-gray-50">
+              {realtimeNewsFeed.length > 0 ? (
+                realtimeNewsFeed.map((article, index) => (
+                  <div key={`${article.url}-${index}`} className="bg-white rounded p-2 shadow-sm border-l-2 border-blue-500">
+                    <h4 className="font-medium text-sm mb-1 leading-tight">{truncateText(article.title, 60)}</h4>
+                    {article.description && (
+                      <p className="text-xs text-muted-foreground mb-1 leading-tight">{truncateText(article.description, 100)}</p>
+                    )}
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium">{article.source_name}</span>
+                        <span>•</span>
+                        <span>{formatDate(article.published_at)}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => window.open(article.url, '_blank')}
+                      >
+                        View
+                      </Button>
+                    </div>
+                    {(article.tickers && article.tickers.length > 0) || (article.topics && article.topics.length > 0) ? (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {article.tickers && article.tickers.map((ticker, idx) => (
+                          <Badge key={idx} variant="default" className="text-xs px-1 py-0">{ticker}</Badge>
+                        ))}
+                        {article.topics && article.topics.map((topic, idx) => (
+                          <Badge key={idx} variant="outline" className="text-xs px-1 py-0">{topic}</Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  No real-time news yet. Start auto collection!
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 控制台区域 */}
+      <div className="mt-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Console</CardTitle>
+            <CardDescription className="text-sm">Real-time logs and command input</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-2">
             <div
               ref={consoleRef}
               className="bg-black text-green-400 font-mono rounded p-2 mb-2 h-64 overflow-y-auto text-xs"
