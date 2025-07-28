@@ -36,41 +36,22 @@ import os
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # Third-party Imports
 import requests
 from dateutil import parser as dateutil_parser
 from dotenv import load_dotenv
 
+# Local Utility Imports
+from utils.date_utils import parse_and_validate_published_date # Import the common date utility
+
 # Load environment variables from .env file
 load_dotenv()
 
 # --- Logging Configuration ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
-
-def log_print(message: str, level: str = 'info'):
-    """Prints a log message to the console with a specific level.
-
-    Args:
-        message (str): The message to log.
-        level (str): The logging level ('info', 'warning', 'error'). Defaults to 'info'.
-    """
-    if level == 'info':
-        logging.info(message)
-    elif level == 'warning':
-        logging.warning(message)
-    elif level == 'error':
-        logging.error(message)
-    else:
-        print(message)
-
+# Removed centralized logging configuration and log_print function, as it's now handled in start_app.py
+# The logging calls will now rely on the root logger configured in start_app.py.
 
 # --- API Key Loading and Base URLs ---
 NEWSAPI_AI_API_KEY = os.getenv("NEWSAPI_AI_API_KEY")
@@ -81,7 +62,7 @@ ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 
 NEWSAPI_AI_BASE_URL = "https://eventregistry.org/api/v1/article/getArticles"
 THENEWSAPI_BASE_URL = "https://api.thenewsapi.com/v1/news/all"
-NEWSDATA_BASE_URL = "https://newsdata.io/api/1/news"
+NEWSDATA_BASE_URL = "https://newsdata.io/api/1/latest"
 TIINGO_BASE_URL = "https://api.tiingo.com/tiingo/news"
 ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
 
@@ -113,7 +94,7 @@ def load_sources_from_file(file_path: str) -> List[str]:
             with open(file_path, 'r', encoding='utf-8') as f:
                 sources = [line.strip() for line in f if line.strip()]
         except Exception as e:
-            log_print(f"Error loading sources from {file_path}: {e}", 'error')
+            logging.error(f"Error loading sources from {file_path}: {e}") # Use logging.error
     return sources
 
 def load_json_sources_from_file(file_path: str) -> List[Dict]:
@@ -131,12 +112,12 @@ def load_json_sources_from_file(file_path: str) -> List[Dict]:
             with open(file_path, 'r', encoding='utf-8') as f:
                 sources = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError) as e:
-            log_print(f"Error loading JSON sources from {file_path}: {e}", 'error')
+            logging.error(f"Error loading JSON sources from {file_path}: {e}") # Use logging.error
     return sources
 
 # --- Base Collector Class ---
 class BaseCollector:
-    """Abstract base class for all news API collectors. 
+    """Abstract base class for all news API collectors.
     Provides common methods for fetching, transforming, and saving articles.
     """
     def __init__(self, api_key: str, base_url: str, output_file: str):
@@ -156,7 +137,7 @@ class BaseCollector:
                 with open(self.output_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError) as e:
-                log_print(f"Error loading existing articles from {self.output_file}: {e}", 'error')
+                logging.error(f"Error loading existing articles from {self.output_file}: {e}") # Use logging.error
         return []
 
     def _save_articles(self, articles: List[Dict]) -> List[Dict]:
@@ -201,15 +182,17 @@ class BaseCollector:
             Optional[Dict]: The JSON response from the API, or None if an error occurred or API key is missing.
         """
         if not self.api_key:
-            log_print(f"API key not provided for {self.__class__.__name__}. Skipping fetch.", 'warning')
+            logging.warning(f"API key not provided for {self.__class__.__name__}. Skipping fetch.") # Use logging.warning
             return None
         try:
             response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status() # Raise an exception for HTTP errors
             return response.json()
         except requests.exceptions.RequestException as e:
-            log_print(f"Error fetching data from {self.__class__.__name__}: {e}", 'error')
+            logging.error(f"Error fetching data from {self.__class__.__name__}: {e}") # Use logging.error
             return None
+
+    # Removed _parse_and_validate_published_date from here as it's now a common utility in utils/date_utils.py
 
     def fetch_articles(self) -> List[Dict]:
         """Abstract method to fetch articles from the specific API.
@@ -238,7 +221,7 @@ class BaseCollector:
         Returns:
             List[Dict]: A list of articles that were newly added to the JSON file in this run.
         """
-        log_print(f"Running {self.__class__.__name__}...")
+        logging.info(f"Running {self.__class__.__name__}...") # Use logging.info
         fetched_articles = self.fetch_articles()
         transformed_articles = [
             self._transform_article(article) for article in fetched_articles
@@ -256,7 +239,7 @@ class NewsAPIAICollector(BaseCollector):
     def fetch_articles(self) -> List[Dict]:
         sources_list = load_sources_from_file(API_SOURCES_FILE)
         if not sources_list:
-            log_print("NewsAPI.ai: No sources configured. Returning empty list.", 'warning')
+            logging.warning("NewsAPI.ai: No sources configured. Returning empty list.") # Use logging.warning
             return []
 
         params = {
@@ -290,25 +273,19 @@ class NewsAPIAICollector(BaseCollector):
         return articles
 
     def _transform_article(self, article: Dict) -> Optional[Dict]:
-        published_at = article.get("date")
-        if published_at:
-            try:
-                dt_obj = dateutil_parser.parse(published_at)
-                published_at = dt_obj.replace(tzinfo=timezone.utc) # Convert to timezone-aware datetime
-            except ValueError:
-                published_at = None
+        published_at = parse_and_validate_published_date(article.get("date")) # Use common helper
 
         return {
             "title": article.get("title"),
             "description": article.get("body"),
             "url": article.get("url"),
             "image_url": article.get("image"),
-            "published_at": published_at, 
+            "published_at": published_at,
             "source_name": article.get("source", {}).get("title"),
             "source_url": article.get("source", {}).get("uri"),
             "language": article.get("lang"),
             "full_content": article.get("body"),
-            "authors": [], 
+            "authors": [],
             "tickers": [],
             "topics": [cat['name'] for cat in article.get("categories", []) if 'name' in cat]
         }
@@ -321,14 +298,14 @@ class TheNewsAPICollector(BaseCollector):
     def fetch_articles(self) -> List[Dict]:
         sources_list = load_sources_from_file(API_SOURCES_FILE)
         if not sources_list:
-            log_print("TheNewsAPI: No sources configured. Returning empty list.", 'warning')
+            logging.warning("TheNewsAPI: No sources configured. Returning empty list.") # Use logging.warning
             return []
         
         params = {
             "api_token": self.api_key,
             "language": "en",
             "limit": 100,
-            "search": "", 
+            "search": "",
         }
         data = self._fetch_data(params)
         articles = []
@@ -337,13 +314,7 @@ class TheNewsAPICollector(BaseCollector):
         return articles
 
     def _transform_article(self, article: Dict) -> Optional[Dict]:
-        published_at = article.get("published_at")
-        if published_at:
-            try:
-                dt_obj = dateutil_parser.parse(published_at)
-                published_at = dt_obj.replace(tzinfo=timezone.utc)
-            except ValueError:
-                published_at = None
+        published_at = parse_and_validate_published_date(article.get("published_at")) # Use common helper
 
         return {
             "title": article.get("title"),
@@ -352,9 +323,9 @@ class TheNewsAPICollector(BaseCollector):
             "image_url": article.get("image_url"),
             "published_at": published_at,
             "source_name": article.get("source"),
-            "source_url": article.get("url"), 
+            "source_url": article.get("url"),
             "language": article.get("language"),
-            "full_content": article.get("description"), 
+            "full_content": article.get("description"),
             "authors": article.get("authors", []),
             "tickers": [],
             "topics": []
@@ -368,15 +339,14 @@ class NewsDataCollector(BaseCollector):
     def fetch_articles(self) -> List[Dict]:
         sources_list = load_sources_from_file(API_SOURCES_FILE)
         if not sources_list:
-            log_print("NewsData.io: No sources configured. Returning empty list.", 'warning')
+            logging.warning("NewsData.io: No sources configured. Returning empty list.") # Use logging.warning
             return []
 
         params = {
             "apikey": self.api_key,
             "language": "en",
-            "q": "", 
-            "page": 0, 
-            "size": 100,
+            "q": "world news",
+            "size": 10,
         }
         data = self._fetch_data(params)
         articles = []
@@ -385,13 +355,7 @@ class NewsDataCollector(BaseCollector):
         return articles
 
     def _transform_article(self, article: Dict) -> Optional[Dict]:
-        published_at = article.get("pubDate")
-        if published_at:
-            try:
-                dt_obj = dateutil_parser.parse(published_at)
-                published_at = dt_obj.replace(tzinfo=timezone.utc)
-            except ValueError:
-                published_at = None
+        published_at = parse_and_validate_published_date(article.get("pubDate")) # Use common helper
 
         return {
             "title": article.get("title"),
@@ -424,23 +388,17 @@ class TiingoCollector(BaseCollector):
         return data if isinstance(data, list) else []
 
     def _transform_article(self, article: Dict) -> Optional[Dict]:
-        published_at = article.get("publishedDate")
-        if published_at:
-            try:
-                dt_obj = dateutil_parser.parse(published_at)
-                published_at = dt_obj.replace(tzinfo=timezone.utc)
-            except ValueError:
-                published_at = None
+        published_at = parse_and_validate_published_date(article.get("publishedDate")) # Use common helper
 
         return {
             "title": article.get("title"),
             "description": article.get("description"),
             "url": article.get("url"),
-            "image_url": None, 
+            "image_url": None,
             "published_at": published_at,
             "source_name": article.get("source"),
-            "source_url": article.get("url"), 
-            "language": 'en', 
+            "source_url": article.get("url"),
+            "language": 'en',
             "full_content": article.get("articleBody"),
             "authors": article.get("authors", []),
             "tickers": article.get("tags", []),
@@ -467,24 +425,37 @@ class AlphaVantageCollector(BaseCollector):
         return articles
 
     def _transform_article(self, article: Dict) -> Optional[Dict]:
-        published_at = article.get("time_published", "")
-        if published_at:
-            try:
-                dt_obj = datetime.strptime(published_at, '%Y%m%dT%H%M%S')
-                published_at = dt_obj.replace(tzinfo=timezone.utc)
-            except ValueError:
-                published_at = None 
+        # Use common helper with explicit format for AlphaVantage's specific date format
+        published_at = parse_and_validate_published_date(article.get("time_published", ""), '%Y%m%dT%H%M%S')
 
-        authors = [author.get("name") for author in article.get("authors", []) if author.get("name")]
-        tickers = [item.get("ticker") for item in article.get("tickers_sentiment", []) if item.get("ticker")]
-        topics = [item.get("topic") for item in article.get("topics", []) if item.get("topic")]
+        # Safe extraction with type checking
+        authors = []
+        for author in article.get("authors", []):
+            if isinstance(author, dict) and author.get("name"):
+                authors.append(author.get("name"))
+            elif isinstance(author, str):
+                authors.append(author)
+        
+        tickers = []
+        for item in article.get("tickers_sentiment", []):
+            if isinstance(item, dict) and item.get("ticker"):
+                tickers.append(item.get("ticker"))
+            elif isinstance(item, str):
+                tickers.append(item)
+        
+        topics = []
+        for item in article.get("topics", []):
+            if isinstance(item, dict) and item.get("topic"):
+                topics.append(item.get("topic"))
+            elif isinstance(item, str):
+                topics.append(item)
 
         return {
             "title": article.get("title"),
-            "description": article.get("summary"),
+            "description": article.get("summary"), # Changed to summary based on observation
             "url": article.get("url"),
             "image_url": article.get("banner_image"),
-            "published_at": published_at, 
+            "published_at": published_at,
             "source_name": article.get("source"),
             "source_url": article.get("source_domain"),
             "language": article.get("language"),

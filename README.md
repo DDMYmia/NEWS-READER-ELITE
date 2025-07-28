@@ -1,66 +1,96 @@
-# NEWS-READER-ELITE
+# News Reader Elite
 
-A unified web-based news collection system designed for efficient data gathering, storage, and real-time display. It integrates multiple external news APIs (NewsAPI.ai, TheNewsAPI, NewsData.io, Tiingo, AlphaVantage) and RSS feeds. The system features real-time data processing, robust storage with PostgreSQL (primary) and MongoDB (backup), advanced deduplication, source filtering, and both automated and manual collection capabilities. The backend is built with Litestar (Python), and the frontend with React + Next.js + shadcn/ui.
+A comprehensive news aggregation system that collects and displays news from multiple sources including APIs and RSS feeds. Built with Python (Litestar) backend and React/Next.js frontend.
 
 ## Features
 
--   **Modern Web Dashboard**: Intuitive user interface built with React, Next.js, and shadcn/ui.
--   **Real-time News Feed**: Immediate display of newly collected articles via WebSocket push.
--   **Multi-API Integration**: Collects news from:
-    -   NewsAPI.ai (Event Registry)
-    -   TheNewsAPI.com
-    -   NewsData.io
-    -   Tiingo (Financial News)
-    -   AlphaVantage (Market News & Sentiment)
--   **RSS Feed Support**: Compatible with RSS 2.0 and Atom feeds.
--   **Dual Database Storage**:
-    -   **PostgreSQL**: Primary persistent storage for news articles.
-    -   **MongoDB**: Parallel backup storage for redundancy and flexible data access.
--   **Advanced Deduplication**: Prevents duplicate articles based on URL uniqueness across all sources and databases.
--   **Source Filtering**: Configurable to fetch news from specific sources.
--   **Flexible Collection Modes**: Supports both manual on-demand collection and automated scheduled collection.
--   **Live Log Streaming**: Real-time operational logs streamed to the frontend console for monitoring.
--   **Unified Article Format**: All collected articles are transformed into a consistent schema for easy processing and display.
+- **Multi-Source Collection**: Integrates with 5 major news APIs and RSS feeds
+- **Real-time Processing**: Immediate data processing and storage
+- **Dual Database Storage**: PostgreSQL (primary) + MongoDB (backup)
+- **Modern Web Interface**: React + Next.js dashboard
+- **Advanced Deduplication**: Prevents duplicate articles
+- **Flexible Collection**: Manual and automated collection modes
 
-## Technical Stack
+## Quick Start
 
--   **Backend**: Python 3.13+
-    -   **Framework**: [Litestar](https://litestar.dev/) (ASGI framework for building perform performant APIs)
-    -   **ASGI Server**: [Uvicorn](https://www.uvicorn.org/)
-    -   **Database ORM/Driver**: [psycopg](https://www.psycopg.org/psycopg3/) (PostgreSQL), [PyMongo](https://pymongo.readthedocs.io/) (MongoDB)
-    -   **Environment Management**: [python-dotenv](https://pypi.org/project/python-dotenv/)
-    -   **Date Parsing**: [python-dateutil](https://dateutil.readthedocs.io/en/stable/)
-    -   **HTTP Requests**: [requests](https://requests.readthedocs.io/en/latest/)
-    -   **XML Parsing**: `xml.etree.ElementTree`
--   **Frontend**: JavaScript/TypeScript
-    -   **Framework**: [Next.js](https://nextjs.org/) (React Framework)
-    -   **UI Components**: [shadcn/ui](https://ui.shadcn.com/)
-    -   **Package Manager**: [npm](https://www.npmjs.com/)
+### Prerequisites
+- Python 3.13+
+- Node.js 18+
+- PostgreSQL database
+- API keys for news services
 
-## Getting Started
+### Setup
 
-To get started with the NEWS-READER-ELITE, follow these simple steps:
+1. **Clone and install dependencies**
+```bash
+pip install -r requirements.txt
+cd frontend && npm install
+```
 
-1.  **Environment Setup**:
-    *   Create a `.env` file in the project root directory. You can use the provided `.env.sample` as a template. Fill in your actual API keys and database credentials.
-    *   Ensure PostgreSQL and MongoDB databases are running and accessible with the configured credentials.
+2. **Configure environment**
+```bash
+cp .env.sample .env
+# Edit .env with your database credentials and API keys
+```
 
-### Running the Application
+3. **Start the application**
+```bash
+# Backend
+python start_app.py
 
-Simply run the following commands in separate terminal windows:
+# Frontend (in another terminal)
+cd frontend && npm run dev
+```
 
-1.  **Start Backend API Server**:
-    ```bash
-    python3 start_app.py
-    ```
-    (Access at `http://localhost:8000` for API, `http://localhost:8000/docs` for API docs, `http://localhost:8000/api/health` for health check)
+- **Backend API**: http://localhost:8000
+- **Frontend Dashboard**: http://localhost:3000
+- **API Documentation**: http://localhost:8000/docs
 
-2.  **Start Frontend Development Server**:
-    ```bash
-    cd frontend
-    npm run dev
-    ```
-    (Access at `http://localhost:3000` for Dashboard)
+## Supported News Sources
+
+- NewsAPI.ai (Event Registry)
+- TheNewsAPI.com
+- NewsData.io
+- Tiingo (Financial News)
+- AlphaVantage (Market News)
+- RSS Feeds (RSS 2.0 and Atom)
+
+## Configuration
+
+### API Sources
+Edit `sources/01_api_sources.txt` to configure API sources:
+```
+reuters.com
+bloomberg.com
+cnn.com
+```
+
+### RSS Sources
+Edit `sources/02_rss_sources.json` to configure RSS feeds:
+```json
+[
+  {
+    "name": "Reuters",
+    "url": "https://feeds.reuters.com/reuters/topNews"
+  }
+]
+```
+
+## API Endpoints
+
+- `GET /api/health` - Health check
+- `GET /api/stats` - System statistics
+- `GET /api/news` - Retrieve news articles
+- `GET /api/sources` - List configured sources
+- `POST /api/collect/api` - Trigger API collection
+- `POST /api/collect/rss` - Trigger RSS collection
+
+## Testing
+
+Run the system test suite:
+```bash
+python test_system.py
+```
 
 ## Project Structure
 
@@ -89,3 +119,4 @@ NEWS-READER-ELITE/
 ├── logs/                    # Application log files
 ├── test_system.py           # System test script
 └── README.md                # Project documentation
+```

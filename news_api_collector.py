@@ -1,184 +1,133 @@
+#!/usr/bin/env python3
 """
 news_api_collector.py
 
-This module orchestrates the execution of various news API collectors.
-It runs each collector, saves the newly fetched articles to both PostgreSQL and MongoDB,
-and records statistics for each run.
+This module orchestrates the collection of news articles from multiple API sources.
+It manages the execution of various news API collectors, handles data transformation,
+and coordinates saving to both PostgreSQL and MongoDB databases.
 
-Functions:
-- get_json_file_counts: Retrieves article counts from local JSON files.
-- run_newsapi_ai: Executes the NewsAPI.ai collector.
-- run_thenewsapi: Executes TheNewsAPI.com collector.
-- run_newsdata: Executes NewsData.io collector.
-- run_tiingo: Executes the Tiingo collector.
-- run_alpha_vantage: Executes the AlphaVantage collector.
-- main: The primary function to run all configured API news collectors.
+Main Functions:
+- run_single_collector: Executes a single collector and saves results.
+- run_all_collectors: Orchestrates the execution of all configured collectors.
+- main: Entry point for running the complete API collection process.
 
 Dependencies:
-- news_api_settings: Contains definitions for individual API collectors and utility functions.
-- news_db_utils: Provides functions for saving articles to the database and getting database statistics.
+- news_api_settings: Contains collector classes and utility functions.
+- news_postgres_utils: For saving articles to PostgreSQL and MongoDB.
+- news_mongo_utils: For MongoDB operations.
 
 Usage:
-Call the `main()` function to initiate a full API news collection run.
+This module is used by the main application to collect news from all configured APIs.
+It can be run independently or as part of the automated collection system.
 
 Author: Gemini AI Assistant
 Last updated: 2024-07-30
 """
 
-import os
-import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
+from datetime import datetime
 
-# Import collector classes and utility functions from news_api_settings
+# Import collector classes and utilities
 from news_api_settings import (
     NewsAPIAICollector,
     TheNewsAPICollector,
     NewsDataCollector,
     TiingoCollector,
     AlphaVantageCollector,
-    log_print,
-    NEWS_FILE_NEWSAPI_AI,
-    NEWS_FILE_THENEWSAPI,
-    NEWS_FILE_NEWSDATA,
-    NEWS_FILE_TIINGO,
-    NEWS_FILE_ALPHA_VANTAGE
+    load_sources_from_file,
+    load_json_sources_from_file
 )
 
-# Import database utility functions
+# Import database utilities
 import news_postgres_utils
 
-
-def get_json_file_counts() -> Dict[str, int]:
-    """Gets the current article counts from all relevant JSON output files.
-
-    Returns:
-        Dict[str, int]: A dictionary mapping output file names (without path/extension) to their article counts.
+def _run_single_collector(collector_class, collector_name: str) -> List[Dict[str, Any]]:
     """
-    counts = {}
-    json_files = [
-        NEWS_FILE_NEWSAPI_AI, NEWS_FILE_THENEWSAPI, NEWS_FILE_NEWSDATA,
-        NEWS_FILE_TIINGO, NEWS_FILE_ALPHA_VANTAGE
+    Executes a single collector and saves the results to the database.
+    
+    Args:
+        collector_class: The collector class to instantiate and run.
+        collector_name (str): Name of the collector for logging purposes.
+        
+    Returns:
+        List[Dict[str, Any]]: List of newly saved articles from this collector.
+    """
+    try:
+        collector = collector_class()
+        new_articles = collector.run_collector()
+        
+        if new_articles:
+            # Save to database using the unified save function
+            result = news_postgres_utils.save_articles_simple(new_articles, collector.output_file)
+            logging.info(f"{collector_name}: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
+            return result.get('new_articles', [])
+        else:
+            logging.info(f"{collector_name}: No new articles fetched or all were duplicates.")
+            return []
+            
+    except Exception as e:
+        logging.error(f"Error running {collector_name}: {e}")
+        return []
+
+def run_all_collectors() -> List[Dict[str, Any]]:
+    """
+    Executes all configured news API collectors and returns newly saved articles.
+    
+    Returns:
+        List[Dict[str, Any]]: List of all newly saved articles from all collectors.
+    """
+    collectors = [
+        (NewsAPIAICollector, "NewsAPI.ai"),
+        (TheNewsAPICollector, "TheNewsAPI"),
+        (NewsDataCollector, "NewsData.io"),
+        (TiingoCollector, "Tiingo"),
+        (AlphaVantageCollector, "AlphaVantage")
     ]
-    for file_path in json_files:
-        file_name = os.path.basename(file_path).replace('.json', '')
-        try:
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    counts[file_name] = len(data) if isinstance(data, list) else 0
-        except Exception as e:
-            log_print(f"Error reading JSON file {file_path}: {e}", 'error')
-            counts[file_name] = 0
-    return counts
-
-def run_newsapi_ai() -> List[Dict]:
-    """Runs the NewsAPI.ai collector to fetch, transform, and save articles.
-
-    Returns:
-        List[Dict]: A list of newly saved articles (after deduplication and DB insertion).
-    """
-    collector = NewsAPIAICollector()
-    new_articles = collector.run_collector() # Returns articles newly added to JSON
-    if new_articles:
-        result = news_postgres_utils.save_articles_simple(new_articles, NEWS_FILE_NEWSAPI_AI)
-        log_print(f"NewsAPI.ai: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
-    else:
-        log_print("NewsAPI.ai: No new articles fetched or all were duplicates.")
-    return new_articles
-
-def run_thenewsapi() -> List[Dict]:
-    """Runs TheNewsAPI.com collector to fetch, transform, and save articles.
-
-    Returns:
-        List[Dict]: A list of newly saved articles (after deduplication and DB insertion).
-    """
-    collector = TheNewsAPICollector()
-    new_articles = collector.run_collector()
-    if new_articles:
-        result = news_postgres_utils.save_articles_simple(new_articles, NEWS_FILE_THENEWSAPI)
-        log_print(f"TheNewsAPI: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
-    else:
-        log_print("TheNewsAPI: No new articles fetched or all were duplicates.")
-    return new_articles
-
-def run_newsdata() -> List[Dict]:
-    """Runs the NewsData.io collector to fetch, transform, and save articles.
-
-    Returns:
-        List[Dict]: A list of newly saved articles (after deduplication and DB insertion).
-    """
-    collector = NewsDataCollector()
-    new_articles = collector.run_collector()
-    if new_articles:
-        result = news_postgres_utils.save_articles_simple(new_articles, NEWS_FILE_NEWSDATA)
-        log_print(f"NewsData.io: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
-    else:
-        log_print("NewsData.io: No new articles fetched or all were duplicates.")
-    return new_articles
-
-def run_tiingo() -> List[Dict]:
-    """Runs the Tiingo collector to fetch, transform, and save articles.
-
-    Returns:
-        List[Dict]: A list of newly saved articles (after deduplication and DB insertion).
-    """
-    collector = TiingoCollector()
-    new_articles = collector.run_collector()
-    if new_articles:
-        result = news_postgres_utils.save_articles_simple(new_articles, NEWS_FILE_TIINGO)
-        log_print(f"Tiingo: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
-    else:
-        log_print("Tiingo: No new articles fetched or all were duplicates.")
-    return new_articles
-
-def run_alpha_vantage() -> List[Dict]:
-    """Runs the AlphaVantage collector to fetch, transform, and save articles.
-
-    Returns:
-        List[Dict]: A list of newly saved articles (after deduplication and DB insertion).
-    """
-    collector = AlphaVantageCollector()
-    new_articles = collector.run_collector()
-    if new_articles:
-        result = news_postgres_utils.save_articles_simple(new_articles, NEWS_FILE_ALPHA_VANTAGE)
-        log_print(f"AlphaVantage: Fetched {len(new_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}.")
-    else:
-        log_print("AlphaVantage: No new articles fetched or all were duplicates.")
-    return new_articles
-
-def main() -> List[Dict]:
-    """Main function to run all API news collectors.
-    This function executes each configured API collector and aggregates the newly saved articles.
-
-    Returns:
-        List[Dict]: A combined list of all newly saved articles from all API collectors in this run.
-    """
-    log_print("Starting API news collection...")
     
     all_new_articles = []
-
-    # Run each collector and extend the list of new articles
-    new_from_newsapi_ai = run_newsapi_ai()
-    if new_from_newsapi_ai: all_new_articles.extend(new_from_newsapi_ai)
-
-    new_from_thenewsapi = run_thenewsapi()
-    if new_from_thenewsapi: all_new_articles.extend(new_from_thenewsapi)
-
-    new_from_newsdata = run_newsdata()
-    if new_from_newsdata: all_new_articles.extend(new_from_newsdata)
-
-    new_from_tiingo = run_tiingo()
-    if new_from_tiingo: all_new_articles.extend(new_from_tiingo)
-
-    new_from_alpha_vantage = run_alpha_vantage()
-    if new_from_alpha_vantage: all_new_articles.extend(new_from_alpha_vantage)
     
-    log_print(f"API collection finished. Total new articles this run: {len(all_new_articles)}.")
+    for collector_class, collector_name in collectors:
+        try:
+            collector_result = _run_single_collector(collector_class, collector_name)
+            
+            # Ensure the result is a list
+            if isinstance(collector_result, list):
+                all_new_articles.extend(collector_result)
+            else:
+                logging.warning(f"Warning: A collector returned a non-list result of type {type(collector_result)}. Result was ignored.")
+                
+        except Exception as e:
+            logging.error(f"Error in collector {collector_name}: {e}")
+            continue
+    
+    return all_new_articles
+
+def main():
+    """
+    Main function to run the complete API news collection process.
+    This function orchestrates the collection from all APIs and provides summary statistics.
+    """
+    logging.info("Starting API news collection...")
+    
+    # Run all collectors
+    all_new_articles = run_all_collectors()
+    
+    # Log summary
+    logging.info(f"API collection finished. Total new articles this run: {len(all_new_articles)}.")
+    
+    # Get total count from database
+    total_count = news_postgres_utils.get_total_articles_count()
+    logging.info(f"Total articles in database: {total_count}")
+    
     return all_new_articles
 
 if __name__ == "__main__":
-    # Example of running the main API collection function
+    # Configure logging for standalone execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
     new_articles = main()
-    log_print(f"Total new articles saved to DB and JSON: {len(new_articles)}")
-    # You can further process or inspect new_articles if needed
+    logging.info(f"Total new articles saved to DB and JSON: {len(new_articles)}")

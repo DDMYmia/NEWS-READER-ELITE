@@ -33,7 +33,8 @@ from datetime import datetime
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
+# Removed redundant load_dotenv() as it's handled in start_app.py
+# load_dotenv()
 
 # Import MongoDB utility for parallel saving
 from news_mongo_utils import save_articles_to_mongo
@@ -47,6 +48,7 @@ def get_db_connection() -> psycopg.Connection | None:
     try:
         conn_str = f"dbname={os.getenv('POSTGRES_DB')} user={os.getenv('POSTGRES_USER')} password={os.getenv('POSTGRES_PASSWORD')} host={os.getenv('POSTGRES_HOST', 'localhost')} port={os.getenv('POSTGRES_PORT', '5432')}"
         conn = psycopg.connect(conn_str)
+        logging.info("PostgreSQL connection successful.")
         return conn
     except psycopg.OperationalError as e:
         logging.error(f"Database connection failed: {e}")
@@ -77,7 +79,7 @@ def create_tables():
                         full_content TEXT,
                         authors TEXT[],
                         tickers TEXT[],
-                        tags TEXT[],
+                        topics TEXT[], -- Renamed from tags to topics for consistency
                         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -111,10 +113,10 @@ def insert_articles_simple(articles: List[Dict[str, Any]]) -> Tuple[int, List[Di
         
         insert_query = """
         INSERT INTO articles (title, description, url, image_url, published_at, 
-                            source_name, source_url, language, full_content, authors, tickers, tags)
+                            source_name, source_url, language, full_content, authors, tickers, topics) -- Updated to topics
         VALUES (%(title)s, %(description)s, %(url)s, %(image_url)s, %(published_at)s, 
                 %(source_name)s, %(source_url)s, %(language)s, %(full_content)s, 
-                ARRAY[%(authors)s], ARRAY[%(tickers)s], ARRAY[%(tags)s])
+                ARRAY[%(authors)s], ARRAY[%(tickers)s], ARRAY[%(topics)s]) -- Updated to topics
         ON CONFLICT (url) DO NOTHING
         RETURNING id;
         """
@@ -123,15 +125,15 @@ def insert_articles_simple(articles: List[Dict[str, Any]]) -> Tuple[int, List[Di
             with conn.cursor() as cur:
                 for article in articles:
                     # psycopg3 can directly adapt dicts to SQL using %(key)s placeholders
-                    # Ensure authors, tickers, tags are lists (PostgreSQL array type expects lists/tuples)
+                    # Ensure authors, tickers, topics are lists (PostgreSQL array type expects lists/tuples)
                     authors_list = article.get('authors', [])
                     if not isinstance(authors_list, list): authors_list = [authors_list]
 
                     tickers_list = article.get('tickers', [])
                     if not isinstance(tickers_list, list): tickers_list = [tickers_list]
 
-                    tags_list = article.get('tags', [])
-                    if not isinstance(tags_list, list): tags_list = [tags_list]
+                    topics_list = article.get('topics', []) # Changed from tags to topics
+                    if not isinstance(topics_list, list): topics_list = [topics_list]
 
                     params = {
                         'title': article.get('title'),
@@ -145,7 +147,7 @@ def insert_articles_simple(articles: List[Dict[str, Any]]) -> Tuple[int, List[Di
                         'full_content': article.get('full_content'),
                         'authors': authors_list,
                         'tickers': tickers_list,
-                        'tags': tags_list
+                        'topics': topics_list # Changed from tags to topics
                     }
                     result = cur.execute(insert_query, params)
                     
@@ -259,7 +261,7 @@ def get_deduplication_stats() -> Dict[str, int]:
     Returns:
         Dict[str, int]: A dictionary containing total articles, unique titles, unique URLs,
                         and the count of duplicate titles (based on normalization).
-                        Returns an empty dictionary if an error occurs.
+                        Returns an empty dictionary if an `error occurs.
     """
     with get_db_connection() as conn:
         if not conn:
@@ -275,11 +277,15 @@ def get_deduplication_stats() -> Dict[str, int]:
                 cur.execute("SELECT COUNT(DISTINCT url) FROM articles WHERE url IS NOT NULL")
                 unique_urls = cur.fetchone()[0]
                 
+                # Re-calculate duplicate titles based on the current articles in DB
+                cur.execute("SELECT COUNT(*) FROM (SELECT title FROM articles WHERE title IS NOT NULL GROUP BY title HAVING COUNT(*) > 1) AS duplicate_titles;")
+                duplicate_titles_count = cur.fetchone()[0] if cur.fetchone() else 0
+
                 return {
                     'total_articles': total_count,
                     'unique_titles': unique_titles,
                     'unique_urls': unique_urls,
-                    'duplicate_titles': total_count - unique_titles if total_count > unique_titles else 0
+                    'duplicate_titles': duplicate_titles_count # Now correctly calculated
                 }
         except psycopg.Error as e:
             logging.error(f"Failed to get deduplication stats from PostgreSQL: {e}")
@@ -304,8 +310,9 @@ def get_news(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
                 cur.execute("""
                     SELECT id, title, description, url, image_url, published_at, 
                            source_name, source_url, language, full_content, 
-                           authors, tickers, tags, created_at
+                           authors, tickers, topics, created_at -- Updated to topics
                     FROM articles
+                    WHERE published_at <= DATE_TRUNC('day', NOW()) + INTERVAL '2 day' - INTERVAL '1 microsecond'
                     ORDER BY published_at DESC, id DESC
                     LIMIT %s OFFSET %s
                 """, (limit, offset))

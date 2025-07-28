@@ -30,13 +30,14 @@ from datetime import datetime
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
+# Removed redundant load_dotenv() as it's handled in start_app.py
+# load_dotenv()
 
 # --- MongoDB Configuration ---
 MONGO_HOST = os.getenv("MONGO_HOST", "localhost")
 MONGO_PORT = int(os.getenv("MONGO_PORT", 27017))
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "news_db_backup")
-MONGO_COLLECTION_NAME = "articles"
+MONGO_COLLECTION_NAME = "articles" # Collection name for storing news articles
 
 def get_mongo_client() -> MongoClient | None:
     """Establishes and returns a connection to the MongoDB server."""

@@ -5,7 +5,7 @@ from litestar.status_codes import HTTP_200_OK
 from litestar.connection import WebSocket
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import threading
 import asyncio
@@ -51,15 +51,23 @@ auto_rss_stop_event = threading.Event()
 # New entry counts (articles newly saved in current session)
 auto_api_new_count = 0
 auto_rss_new_count = 0
+# Last collection times
+last_api_collection_time: Optional[datetime] = None
+last_rss_collection_time: Optional[datetime] = None
+# Error flags
+api_error_occurred: bool = False
+rss_error_occurred: bool = False
 
 def auto_api_loop(interval=180):
     """Automatic API collection loop."""
-    global auto_api_new_count
+    global auto_api_new_count, last_api_collection_time, api_error_occurred
     log_push(f"[AUTO-API] Auto API collection started, interval={interval}s")
     while not auto_api_stop_event.is_set():
+        api_error_occurred = False # Reset error flag at start of loop
         try:
             log_push("[AUTO-API] Collecting all API news...")
             new_api_articles = api_collector_main()
+            last_api_collection_time = datetime.now() # Update last collection time
             
             # Always log the collection results, regardless of new articles count
             log_push(f"[AUTO-API] Collected {len(new_api_articles)} new API articles.")
@@ -84,6 +92,7 @@ def auto_api_loop(interval=180):
                 })
             log_push("[AUTO-API] Collection round finished.")
         except Exception as e:
+            api_error_occurred = True # Set error flag
             log_push(f"[AUTO-API] Error in auto_api_loop: {e}")
         
         for _ in range(interval):
@@ -93,12 +102,14 @@ def auto_api_loop(interval=180):
 
 def auto_rss_loop(interval=180):
     """Automatic RSS collection loop."""
-    global auto_rss_new_count
+    global auto_rss_new_count, last_rss_collection_time, rss_error_occurred
     log_push(f"[AUTO-RSS] Auto RSS collection started, interval={interval}s")
     while not auto_rss_stop_event.is_set():
+        rss_error_occurred = False # Reset error flag at start of loop
         try:
             log_push("[AUTO-RSS] Collecting RSS news...")
             new_rss_articles = rss_collector_run()
+            last_rss_collection_time = datetime.now() # Update last collection time
             
             # Always log the collection results, regardless of new articles count
             log_push(f"[AUTO-RSS] Collected {len(new_rss_articles)} new RSS articles.")
@@ -122,6 +133,7 @@ def auto_rss_loop(interval=180):
                     "new_articles_list": []
                 })
         except Exception as e:
+            rss_error_occurred = True # Set error flag
             log_push(f"[AUTO-RSS] Error in auto_rss_loop: {e}")
 
         for _ in range(interval):
@@ -167,11 +179,17 @@ async def get_stats() -> Dict[str, Any]:
                     pass
             file_counts[key] = count
         
+        # Calculate total JSON file count
+        total_json_file_count = sum(file_counts.values())
+
         stats = {
             "success": True,
             "database_count": pg_count,
             "mongodb_backup_count": mongo_count,
-            "last_updated": datetime.now().isoformat()
+            "last_updated": datetime.now().isoformat(),
+            "last_api_collection_time": last_api_collection_time.isoformat() if last_api_collection_time else None,
+            "last_rss_collection_time": last_rss_collection_time.isoformat() if last_rss_collection_time else None,
+            "total_json_file_count": total_json_file_count, # Add total JSON file count
         }
         stats.update(file_counts)
         return stats
@@ -182,7 +200,8 @@ async def get_stats() -> Dict[str, Any]:
 @post("/api/collect/api")
 async def collect_api_news() -> Dict[str, Any]:
     """Manually trigger API news collection."""
-    global auto_api_new_count
+    global auto_api_new_count, api_error_occurred
+    api_error_occurred = False # Reset error flag for manual collection
     try:
         new_articles = api_collector_main()
         if new_articles:
@@ -195,12 +214,14 @@ async def collect_api_news() -> Dict[str, Any]:
             })
         return {"success": True, "message": f"API collection completed. New articles: {len(new_articles)}"}
     except Exception as e:
+        api_error_occurred = True
         return {"success": False, "error": str(e)}
 
 @post("/api/collect/rss")
 async def collect_rss_news() -> Dict[str, Any]:
     """Manually trigger RSS news collection."""
-    global auto_rss_new_count
+    global auto_rss_new_count, rss_error_occurred
+    rss_error_occurred = False # Reset error flag for manual collection
     try:
         new_articles = rss_collector_run()
         if new_articles:
@@ -213,6 +234,7 @@ async def collect_rss_news() -> Dict[str, Any]:
             })
         return {"success": True, "message": f"RSS collection completed. New articles: {len(new_articles)}"}
     except Exception as e:
+        rss_error_occurred = True
         return {"success": False, "error": str(e)}
 
 @get("/api/sources")
@@ -356,12 +378,63 @@ async def api_auto_stop_rss() -> Dict[str, Any]:
 
 @get("/api/auto/status")
 async def api_auto_status() -> Dict[str, Any]:
-    return {
-        "api_running": auto_api_thread and auto_api_thread.is_alive(),
-        "rss_running": auto_rss_thread and auto_rss_thread.is_alive(),
-        "api_new": auto_api_new_count,
-        "rss_new": auto_rss_new_count,
-    }
+    """Returns auto collection status including historical totals for API and RSS articles."""
+    try:
+        # Get historical totals from JSON files
+        api_total = 0
+        rss_total = 0
+        
+        # Calculate API total from all API JSON files
+        api_files = {
+            "newsapi_ai_file_count": NEWS_FILE_NEWSAPI_AI,
+            "thenewsapi_file_count": NEWS_FILE_THENEWSAPI,
+            "newsdata_file_count": NEWS_FILE_NEWSDATA,
+            "tiingo_file_count": NEWS_FILE_TIINGO,
+            "alpha_vantage_file_count": NEWS_FILE_ALPHA_VANTAGE,
+        }
+        
+        for key, file_path in api_files.items():
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if isinstance(data, list):
+                        api_total += len(data)
+                except (json.JSONDecodeError, FileNotFoundError):
+                    pass
+        
+        # Calculate RSS total from RSS JSON file
+        if os.path.exists(NEWS_FILE_RSS):
+            try:
+                with open(NEWS_FILE_RSS, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    rss_total = len(data)
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+        
+        return {
+            "api_running": auto_api_thread and auto_api_thread.is_alive(),
+            "rss_running": auto_rss_thread and auto_rss_thread.is_alive(),
+            "api_new": auto_api_new_count,  # Current session new count
+            "rss_new": auto_rss_new_count,  # Current session new count
+            "api_total": api_total,  # Historical total from all API sources
+            "rss_total": rss_total,  # Historical total from RSS sources
+            "api_error_occurred": api_error_occurred,
+            "rss_error_occurred": rss_error_occurred,
+        }
+    except Exception as e:
+        return {
+            "api_running": auto_api_thread and auto_api_thread.is_alive(),
+            "rss_running": auto_rss_thread and auto_rss_thread.is_alive(),
+            "api_new": auto_api_new_count,
+            "rss_new": auto_rss_new_count,
+            "api_total": 0,
+            "rss_total": 0,
+            "api_error_occurred": api_error_occurred,
+            "rss_error_occurred": rss_error_occurred,
+            "error": str(e)
+        }
 
 @post("/api/auto/reset_new")
 async def api_auto_reset_new(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -374,14 +447,15 @@ async def api_auto_reset_new(data: Dict[str, Any]) -> Dict[str, Any]:
 
 # Command API
 def handle_command(cmd: str) -> Dict[str, Any]: # Changed return type to Dict[str, Any]
-    global auto_api_new_count, auto_rss_new_count 
+    global auto_api_new_count, auto_rss_new_count, api_error_occurred, rss_error_occurred
     cmd = cmd.strip().lower()
 
     if cmd in ["collect", "collect api"]:
         log_push("[CMD] Manual API collection triggered (including AlphaVantage).")
+        api_error_occurred = False # Reset error flag for manual collection
         try:
-            new_api_articles = api_collector_main()
-            new_count_from_this_run = len(new_api_articles)
+            new_articles = api_collector_main()
+            new_count_from_this_run = len(new_articles)
             auto_api_new_count += new_count_from_this_run
             total_articles_in_db = news_postgres_utils.get_total_articles_count()
             
@@ -394,13 +468,15 @@ def handle_command(cmd: str) -> Dict[str, Any]: # Changed return type to Dict[st
                 "rss_new": auto_rss_new_count,
                 "total_articles": total_articles_in_db,
                 "total_articles_mongo": news_mongo_utils.get_total_articles_count_mongo(),
-                "new_articles_list": _format_articles_for_push(new_api_articles[:10]) # Limit to 10 articles
+                "new_articles_list": _format_articles_for_push(new_articles[:10]) # Limit to 10 articles
             })
             return {"success": True, "result": f"API collection completed. New articles: {new_count_from_this_run}"}
         except Exception as e:
+            api_error_occurred = True
             return {"success": False, "result": f"API collection error: {e}"}
     elif cmd in ["collect rss"]:
         log_push("[CMD] Manual RSS collection triggered.")
+        rss_error_occurred = False # Reset error flag for manual collection
         try:
             new_rss_articles = rss_collector_run()
             new_count_from_this_run = len(new_rss_articles)
@@ -420,6 +496,7 @@ def handle_command(cmd: str) -> Dict[str, Any]: # Changed return type to Dict[st
             })
             return {"success": True, "result": f"RSS collection completed. New articles: {new_count_from_this_run}"}
         except Exception as e:
+            rss_error_occurred = True
             return {"success": False, "result": f"RSS collection error: {e}"}
     elif cmd in ["auto start", "start auto"]:
         return {"success": False, "result": "Please use the new API/RSS auto buttons above (or start_api/start_rss commands)."}
@@ -431,7 +508,7 @@ def handle_command(cmd: str) -> Dict[str, Any]: # Changed return type to Dict[st
         pg_count = news_postgres_utils.get_total_articles_count()
         mongo_count = news_mongo_utils.get_total_articles_count_mongo()
         # Return a dictionary directly as api_command expects it now
-        return {"success": True, "api_running": api_running, "rss_running": rss_running, "pg_articles": pg_count, "mongo_articles": mongo_count}
+        return {"success": True, "api_running": api_running, "rss_running": rss_running, "pg_articles": pg_count, "mongo_articles": mongo_count, "api_error_occurred": api_error_occurred, "rss_error_occurred": rss_error_occurred}
     elif cmd in ["help", "?"]:
         return {"success": True, "result": "Commands: collect, collect rss, status, help"}
     else:
@@ -545,8 +622,4 @@ app = Litestar(
     ],
     cors_config=cors_config,
     debug=True
-)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+) 

@@ -57,3 +57,7 @@ news_output/auto_collector.log
 
 # Frontend package lock file
 package-lock.json
+
+# Output files (large JSON data files)
+outputs/
+*.json

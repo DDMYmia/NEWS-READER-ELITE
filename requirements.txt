@@ -1,10 +1,29 @@
-psycopg[binary]
-requests==2.31.0
-beautifulsoup4==4.12.2
-eventregistry==9.0
-python-dotenv==1.0.0
-python-dateutil==2.8.2
+# Core Framework
 litestar[standard]==2.16.0
-jinja2==3.1.5
-aiofiles==24.1.0
+
+# Database Drivers
+psycopg[binary]==3.1.18
 pymongo==4.7.3
+
+# HTTP and Web
+requests==2.31.0
+aiofiles==24.1.0
+
+# Data Processing
+python-dateutil==2.8.2
+beautifulsoup4==4.12.2
+
+# Configuration and Environment
+python-dotenv==1.0.0
+
+# Template Engine
+jinja2==3.1.5
+
+# External API Integration
+eventregistry==9.0
+
+# Development and Testing (Optional)
+# pytest==7.4.3
+# pytest-asyncio==0.21.1
+# black==23.11.0
+# flake8==6.1.0

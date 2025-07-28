@@ -30,24 +30,19 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime # For RFC 2822 date parsing
-from dateutil import parser as dateutil_parser # For robust date parsing
+# from dateutil import parser as dateutil_parser # Not directly used anymore, replaced by common utility
 
 # Import local utility modules
 import news_postgres_utils
-from news_api_settings import log_print, load_json_sources_from_file # Re-use load_json_sources_from_file
+from news_api_settings import load_json_sources_from_file # Removed log_print, Re-use load_json_sources_from_file
+from utils.date_utils import parse_and_validate_published_date # Import common date utility
 
 # --- Configuration ---
 RSS_SOURCES_FILE = "sources/02_rss_sources.json"
 NEWS_FILE_RSS = "outputs/01_rss_news.json"
 
 # --- Logging Configuration (consistent with other modules) ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+# This module now relies on the root logger configured in start_app.py.
 
 def load_sources() -> List[Dict]:
     """Loads RSS feed sources from the configured JSON file.
@@ -81,11 +76,11 @@ def fetch_source(source: Dict) -> List[Dict]:
                 articles.append(transformed_article)
 
     except requests.exceptions.RequestException as e:
-        log_print(f"Error fetching RSS from {source['name']} ({source['url']}): {e}", 'error')
+        logging.error(f"Error fetching RSS from {source['name']} ({source['url']}): {e}") # Use logging.error
     except ET.ParseError as e:
-        log_print(f"Error parsing XML from {source['name']} ({source['url']}): {e}", 'error')
+        logging.error(f"Error parsing XML from {source['name']} ({source['url']}): {e}") # Use logging.error
     except Exception as e:
-        log_print(f"Unexpected error for {source['name']}: {e}", 'error')
+        logging.error(f"Unexpected error for {source['name']}: {e}") # Use logging.error
     return articles
 
 def parse_item(item: Any, source: Dict) -> Optional[Dict]: # Updated to accept source: Dict
@@ -114,18 +109,10 @@ def parse_item(item: Any, source: Dict) -> Optional[Dict]: # Updated to accept s
                            item.find('{http://www.w3.org/2005/Atom}content')
     full_content = full_content_element.text if full_content_element is not None else description
 
-    # Parse published date
+    # Parse published date using common utility
     pub_date_element = item.find('pubDate') or item.find('{http://www.w3.org/2005/Atom}published')
-    published_at = None
-    if pub_date_element is not None and pub_date_element.text:
-        try:
-            # Use dateutil.parser for robust date parsing
-            dt_obj = dateutil_parser.parse(pub_date_element.text)
-            published_at = dt_obj.replace(tzinfo=timezone.utc) # Convert to UTC timezone-aware datetime
-        except ValueError:
-            log_print(f"Warning: Could not parse date '{pub_date_element.text}' for article '{title}'.", 'warning')
-            published_at = datetime.now(timezone.utc) - timedelta(hours=1) # Fallback to 1 hour ago UTC
-    else:
+    published_at = parse_and_validate_published_date(pub_date_element.text) if pub_date_element is not None else None
+    if published_at is None: # Fallback if parsing fails or no date element
         published_at = datetime.now(timezone.utc) - timedelta(hours=1) # Fallback to 1 hour ago UTC
 
     # Optional fields, often not present in RSS
@@ -137,7 +124,7 @@ def parse_item(item: Any, source: Dict) -> Optional[Dict]: # Updated to accept s
 
     authors = [] # RSS feeds often don't specify authors in a structured way
     tickers = []
-    tags = [tag.text for tag in item.findall('category') if tag.text is not None]
+    topics = [tag.text for tag in item.findall('category') if tag.text is not None] # Changed from tags to topics
 
     return {
         "title": title,
@@ -151,7 +138,7 @@ def parse_item(item: Any, source: Dict) -> Optional[Dict]: # Updated to accept s
         "full_content": full_content,
         "authors": authors,
         "tickers": tickers,
-        "tags": tags
+        "topics": topics # Changed from tags to topics
     }
 
 def run() -> List[Dict]:
@@ -166,10 +153,10 @@ def run() -> List[Dict]:
     """
     sources = load_sources()
     if not sources:
-        log_print("RSS: No sources configured. Returning empty list.", 'warning')
+        logging.warning("RSS: No sources configured. Returning empty list.") # Use logging.warning
         return []
     
-    log_print(f'Checking and fetching {len(sources)} RSS sources...')
+    logging.info(f'Checking and fetching {len(sources)} RSS sources...') # Use logging.info
     
     fetched_articles = []
     for source in sources:
@@ -177,21 +164,21 @@ def run() -> List[Dict]:
             items = fetch_source(source)
             fetched_articles.extend(items)
             url_short = source.get('url', '').split('//')[-1].split('/')[0]
-            log_print(f"✓ {source['name']} ({url_short}) fetched {len(items)} items.")
+            logging.info(f"✓ {source['name']} ({url_short}) fetched {len(items)} items.") # Use logging.info
         except Exception as e:
-            log_print(f"✗ {source['name']} - {str(e)}", 'error')
+            logging.error(f"✗ {source['name']} - {str(e)}") # Use logging.error
     
     if fetched_articles:
-        log_print(f"Attempting to save {len(fetched_articles)} RSS articles to DB and JSON.")
+        logging.info(f"Attempting to save {len(fetched_articles)} RSS articles to DB and JSON.") # Use logging.info
         result = news_postgres_utils.save_articles_simple(fetched_articles, NEWS_FILE_RSS)
-        log_print(f"RSS: Fetched {len(fetched_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}. Total new articles: {len(result.get('new_articles', []))}")
-        log_print(f"Total unique items in DB: {news_postgres_utils.get_total_articles_count()}")
+        logging.info(f"RSS: Fetched {len(fetched_articles)} articles. Saved to DB: {result['db_count']}, JSON: {result['json_count']}, Mongo: {result['mongo_count']}. Total new articles: {len(result.get('new_articles', []))}") # Use logging.info
+        logging.info(f"Total unique items in DB: {news_postgres_utils.get_total_articles_count()}") # Use logging.info
         return result.get('new_articles', [])
     else:
-        log_print("RSS: No new articles fetched or all were duplicates.")
+        logging.info("RSS: No new articles fetched or all were duplicates.") # Use logging.info
         return []
 
 if __name__ == "__main__":
-    log_print("Starting RSS collection...")
+    logging.info("Starting RSS collection...") # Use logging.info
     new_articles = run()
-    log_print(f"RSS collection finished. Total new articles: {len(new_articles)}")
+    logging.info(f"RSS collection finished. Total new articles: {len(new_articles)}") # Use logging.info
