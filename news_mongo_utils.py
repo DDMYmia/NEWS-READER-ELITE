@@ -26,7 +26,7 @@ import logging
 from typing import List, Dict, Any
 from pymongo import MongoClient, UpdateOne
 from pymongo.errors import ConnectionFailure, OperationFailure
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -112,6 +112,46 @@ def get_total_articles_count_mongo() -> int:
     except OperationFailure as e:
         logging.error(f"Failed to get article count from MongoDB: {e}")
         return 0
+    finally:
+        if client:
+            client.close() 
+
+def get_news_mongo(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    """Fetches news articles from the MongoDB database with pagination."""
+    client = get_mongo_client()
+    if not client:
+        return []
+
+    try:
+        db = client[MONGO_DB_NAME]
+        collection = db[MONGO_COLLECTION_NAME]
+
+        # Query articles, sort by published_at (descending) and skip/limit for pagination
+        # Also filter out future-dated articles, assuming 'published_at' is stored as ISODate or datetime string
+        # MongoDB date filtering: published_at should be less than or equal to now + 2 days
+        # The articles in MongoDB are stored as strings in ISO format, so we can compare directly.
+        two_days_from_now = (datetime.utcnow() + timedelta(days=2)).isoformat()
+        
+        articles = list(collection.find({
+            "published_at": {"$lte": two_days_from_now}
+        }).sort("published_at", -1).skip(offset).limit(limit))
+
+        # Ensure datetime objects are converted to ISO strings for consistency with PostgreSQL utility
+        # This might be redundant if articles are already saved as ISO strings, but safer.
+        for article in articles:
+            for key, value in article.items():
+                if isinstance(value, datetime):
+                    article[key] = value.isoformat()
+            # MongoDB uses _id, but frontend expects 'id'. Convert it.
+            if '_id' in article:
+                article['id'] = str(article['_id'])
+                del article['_id']
+
+        return articles
+
+    except OperationFailure as e:
+        logging.error(f"Failed to fetch news from MongoDB: {e}")
+        return []
     finally:
         if client:
             client.close() 

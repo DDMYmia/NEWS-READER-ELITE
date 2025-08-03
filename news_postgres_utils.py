@@ -241,17 +241,17 @@ def get_total_articles_count() -> int:
     Returns:
         int: The total count of articles, or 0 if an error occurs.
     """
-    with get_db_connection() as conn:
-        if not conn:
-            return 0
-        try:
+    try: # Added try-except block
+        with get_db_connection() as conn:
+            if not conn:
+                return 0
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM articles")
                 count = cur.fetchone()[0]
                 return count
-        except psycopg.Error as e:
-            logging.error(f"Failed to get article count from PostgreSQL: {e}")
-            return 0
+    except psycopg.Error as e: # Catch psycopg errors
+        logging.error(f"Failed to get article count from PostgreSQL: {e}")
+        return 0
 
 def get_deduplication_stats() -> Dict[str, int]:
     """Retrieves deduplication statistics from the PostgreSQL database.
@@ -261,12 +261,12 @@ def get_deduplication_stats() -> Dict[str, int]:
     Returns:
         Dict[str, int]: A dictionary containing total articles, unique titles, unique URLs,
                         and the count of duplicate titles (based on normalization).
-                        Returns an empty dictionary if an `error occurs.
+                        Returns an empty dictionary if an error occurs.
     """
-    with get_db_connection() as conn:
-        if not conn:
-            return {}
-        try:
+    try: # Added try-except block
+        with get_db_connection() as conn:
+            if not conn:
+                return {}
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM articles")
                 total_count = cur.fetchone()[0]
@@ -279,7 +279,8 @@ def get_deduplication_stats() -> Dict[str, int]:
                 
                 # Re-calculate duplicate titles based on the current articles in DB
                 cur.execute("SELECT COUNT(*) FROM (SELECT title FROM articles WHERE title IS NOT NULL GROUP BY title HAVING COUNT(*) > 1) AS duplicate_titles;")
-                duplicate_titles_count = cur.fetchone()[0] if cur.fetchone() else 0
+                # Fetchone can return None if no rows are found, handle this case
+                duplicate_titles_count = cur.fetchone()[0] if cur.rowcount > 0 else 0 
 
                 return {
                     'total_articles': total_count,
@@ -287,9 +288,9 @@ def get_deduplication_stats() -> Dict[str, int]:
                     'unique_urls': unique_urls,
                     'duplicate_titles': duplicate_titles_count # Now correctly calculated
                 }
-        except psycopg.Error as e:
-            logging.error(f"Failed to get deduplication stats from PostgreSQL: {e}")
-            return {}
+    except psycopg.Error as e: # Catch psycopg errors
+        logging.error(f"Failed to get deduplication stats from PostgreSQL: {e}")
+        return {}
 
 def get_news(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
     """Fetches news articles from the PostgreSQL database with pagination.

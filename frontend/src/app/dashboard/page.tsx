@@ -40,8 +40,12 @@ interface NewsStats {
   last_api_collection_time: string | null
   last_rss_collection_time: string | null
   total_json_file_count: number
-  api_new: number
-  rss_new: number
+  rss_file_count: number
+  newsapi_ai_file_count: number
+  thenewsapi_file_count: number
+  newsdata_file_count: number
+  tiingo_file_count: number
+  alpha_vantage_file_count: number
 }
 
 interface AutoCollectionStatus {
@@ -215,12 +219,6 @@ export default function Page() {
               <CardContent>
                 <div className="text-2xl font-bold flex items-baseline gap-1">
                   {stats?.database_count?.toLocaleString() || 0}
-                  {stats && stats.api_new > 0 && (
-                    <span className="text-xs text-muted-foreground ml-2">+ {stats.api_new} (API)</span>
-                  )}
-                  {stats && stats.rss_new > 0 && (
-                    <span className="text-xs text-muted-foreground ml-1">+ {stats.rss_new} (RSS)</span>
-                  )}
                 </div>
                 <p className="text-xs text-muted-foreground mb-4">
                   Total articles in PostgreSQL

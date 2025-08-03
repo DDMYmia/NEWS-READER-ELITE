@@ -11,6 +11,7 @@ import threading
 import asyncio
 import queue
 import time
+import logging
 
 # Import existing news collection modules
 from news_api_collector import main as api_collector_main
@@ -144,58 +145,85 @@ def auto_rss_loop(interval=180):
 @get("/api/news")
 async def get_news_api(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
     """Get news articles from the database with pagination."""
+    articles: List[Dict[str, Any]] = []
     try:
+        # Try fetching from PostgreSQL first
         articles = news_postgres_utils.get_news(limit=limit, offset=offset)
-        return {"success": True, "count": len(articles), "articles": articles}
-    except Exception as e:
-        return {"success": False, "error": str(e), "count": 0, "articles": []}
+        if articles: # If articles are found in PG, return them
+            return {"success": True, "count": len(articles), "articles": articles}
+        else: # If PG is up but returns no articles, log and try Mongo (e.g., PG DB is empty or filters too strict)
+            logging.info("[API] PostgreSQL returned no articles or connection failed. Attempting MongoDB fallback.")
+    except Exception as pg_e:
+        logging.error(f"[API] Failed to fetch news from PostgreSQL: {pg_e}. Attempting MongoDB fallback.")
+        
+    # Fallback to MongoDB if PostgreSQL failed or returned no articles
+    try:
+        articles = news_mongo_utils.get_news_mongo(limit=limit, offset=offset)
+        if articles: # If articles are found in Mongo, return them
+            return {"success": True, "count": len(articles), "articles": articles}
+        else:
+            logging.info("[API] MongoDB also returned no articles.")
+    except Exception as mongo_e:
+        logging.error(f"[API] Failed to fetch news from MongoDB fallback: {mongo_e}.")
+        # If both fail, return an error with details from both attempts
+        return {"success": False, "error": f"Failed to fetch news from both PG and Mongo. PG error: {pg_e if 'pg_e' in locals() else 'N/A'}, Mongo error: {mongo_e}", "count": 0, "articles": []}
+    
+    # If no articles were found in either (e.g., empty DBs), return success=True with empty list
+    return {"success": True, "count": 0, "articles": []}
 
 @get("/api/stats")
 async def get_stats() -> Dict[str, Any]:
     """Returns statistics about the collected news from databases and JSON files."""
+    pg_count = 0
+    mongo_count = 0
+    
     try:
         pg_count = news_postgres_utils.get_total_articles_count()
-        mongo_count = news_mongo_utils.get_total_articles_count_mongo()
-        
-        file_counts = {}
-        json_files = {
-            "rss_file_count": NEWS_FILE_RSS,
-            "newsapi_ai_file_count": NEWS_FILE_NEWSAPI_AI,
-            "thenewsapi_file_count": NEWS_FILE_THENEWSAPI,
-            "newsdata_file_count": NEWS_FILE_NEWSDATA,
-            "tiingo_file_count": NEWS_FILE_TIINGO,
-            "alpha_vantage_file_count": NEWS_FILE_ALPHA_VANTAGE,
-        }
-        
-        for key, file_path in json_files.items():
-            count = 0
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    if isinstance(data, list):
-                        count = len(data)
-                except (json.JSONDecodeError, FileNotFoundError):
-                    pass
-            file_counts[key] = count
-        
-        # Calculate total JSON file count
-        total_json_file_count = sum(file_counts.values())
-
-        stats = {
-            "success": True,
-            "database_count": pg_count,
-            "mongodb_backup_count": mongo_count,
-            "last_updated": datetime.now().isoformat(),
-            "last_api_collection_time": last_api_collection_time.isoformat() if last_api_collection_time else None,
-            "last_rss_collection_time": last_rss_collection_time.isoformat() if last_rss_collection_time else None,
-            "total_json_file_count": total_json_file_count, # Add total JSON file count
-        }
-        stats.update(file_counts)
-        return stats
-        
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logging.error(f"[API] Failed to get PG count: {e}")
+        
+    try:
+        mongo_count = news_mongo_utils.get_total_articles_count_mongo()
+    except Exception as e:
+        logging.error(f"[API] Failed to get Mongo count: {e}")
+
+    file_counts = {}
+    json_files = {
+        "rss_file_count": NEWS_FILE_RSS,
+        "newsapi_ai_file_count": NEWS_FILE_NEWSAPI_AI,
+        "thenewsapi_file_count": NEWS_FILE_THENEWSAPI,
+        "newsdata_file_count": NEWS_FILE_NEWSDATA,
+        "tiingo_file_count": NEWS_FILE_TIINGO,
+        "alpha_vantage_file_count": NEWS_FILE_ALPHA_VANTAGE,
+    }
+    
+    for key, file_path in json_files.items():
+        count = 0
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    count = len(data)
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                logging.warning(f"[API] Could not read JSON file {file_path}: {e}") # Use warning for file read errors
+                pass
+        file_counts[key] = count
+    
+    # Calculate total JSON file count
+    total_json_file_count = sum(file_counts.values())
+
+    stats = {
+        "success": True,
+        "database_count": pg_count,
+        "mongodb_backup_count": mongo_count,
+        "last_updated": datetime.now().isoformat(),
+        "last_api_collection_time": last_api_collection_time.isoformat() if last_api_collection_time else None,
+        "last_rss_collection_time": last_rss_collection_time.isoformat() if last_rss_collection_time else None,
+        "total_json_file_count": total_json_file_count, # Add total JSON file count
+    }
+    stats.update(file_counts)
+    return stats
 
 @post("/api/collect/api")
 async def collect_api_news() -> Dict[str, Any]:
